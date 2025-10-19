@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NOISE.IO - Party MVP</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.2/dist/confetti.browser.min.js"></script>
+  <meta name="theme-color" content="#a57bff" />
+  <meta name="color-scheme" content="light" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <link rel="icon" href="/assets/ui/echos.png" type="image/png" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+</head>
+<body>
+  <div id="app" class="fade-in">
+    <header class="app-header card">
+      <div class="title">
+        <h1>NOISE.IO</h1>
+        <div id="roomInfo" class="room-info"></div>
+      </div>
+      <div class="row">
+        <div id="echoWallet" class="echo-wallet">
+          <img src="/assets/ui/echos.png" alt="Échos" class="coin" />
+          <span id="echoBalance">0</span>
+        </div>
+        <button id="openAvatarBtn" class="avatar-chip" aria-label="Changer d’avatar">
+          <img id="avatarChipImg" src="/assets/avatars/skin1.png" alt="Avatar" />
+        </button>
+        <div id="statusBanner" class="status-banner hidden">Prêt ?</div>
+      </div>
+    </header>
+
+    <!-- Echo wallet floating chip on home (main menu) -->
+    <div id="echoFab" class="echo-fab" aria-hidden="false">
+      <img src="/assets/ui/echos.png" alt="Échos" class="coin" />
+      <span id="echoBalanceHome">0</span>
+    </div>
+
+    <main class="main">
+      <section id="home" class="landing card center">
+        <div class="landing-inner">
+          <div class="brand">
+            <h1 class="logo">NOISE.IO</h1>
+            <p class="tag">Le jeu où tu bruites pour faire deviner 🎤</p>
+          </div>
+          <div class="hero" aria-hidden="true">
+            <div class="halo"></div>
+            <div class="mic">🎙️</div>
+            <div class="bubble b1">😊</div>
+            <div class="bubble b2">😄</div>
+            <div class="bubble b3">🤭</div>
+          </div>
+          <div class="actions">
+            <button id="playNowBtn" class="btn primary big">🎮 Jouer maintenant</button>
+            <button id="openJoinBtn" class="btn ghost big">🔑 Rejoindre un lobby</button>
+            <div id="joinRowHome" class="row join-row hidden">
+              <input id="joinCodeHome" class="input" placeholder="Code de lobby" maxlength="6" />
+              <button id="joinGoBtn" class="btn">→</button>
+            </div>
+          </div>
+        </div>
+      </section>
+      
+      <!-- Avatar selector modal -->
+      <div id="avatarModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="avatarTitle">
+        <div class="modal-card card">
+          <div class="row between">
+            <h3 id="avatarTitle">Choisis ton avatar</h3>
+            <button id="closeAvatarBtn" class="btn small">Fermer</button>
+          </div>
+          <div id="avatarGrid" class="avatar-grid"></div>
+        </div>
+      </div>
+
+      <section id="auth" class="card center">
+        <h2>Rejoindre la fête</h2>
+        <input id="nickname" class="input" placeholder="Pseudo" maxlength="24" />
+        <div class="row">
+          <button id="createBtn" class="btn primary">Créer un lobby</button>
+        </div>
+        <div class="row">
+          <input id="joinCode" class="input" placeholder="Code lobby" maxlength="6" />
+          <button id="joinBtn" class="btn">Rejoindre</button>
+        </div>
+        <div class="hint">Astuce: ouvrez deux onglets pour tester</div>
+      </section>
+
+      <section id="lobby" class="card narrow hidden lobby-screen">
+        <div class="code-bar">
+          <div class="code">Code : <b id="roomCode"></b></div>
+          <div class="code-actions">
+            <button id="copyCodeBtn" class="btn ghost small">📋 Copier</button>
+            <button id="leaveBtn" class="btn danger ghost small">Quitter</button>
+          </div>
+        </div>
+
+        <div class="card inner players-card">
+          <h3>Joueurs</h3>
+          <ul id="players" class="players modern"></ul>
+        </div>
+
+        <div id="lobbyActions" class="lobby-actions">
+          <button id="launchBtn" class="btn primary big hidden">🚀 Lancer la partie</button>
+          <div id="waitingHostMsg" class="hint muted hidden">⏳ En attente du lancement de la partie par l’hôte…</div>
+        </div>
+
+        <div class="hint center">Invite tes amis à rejoindre avec le code ou le lien 🔗</div>
+      </section>
+
+      <section id="round" class="hidden">
+        <div class="card narrow">
+          <div class="round-header">
+            <div class="round-top">
+              <div id="turnLabel" class="turn-label">Manche en cours</div>
+              <div id="recorderChip" class="recorder-chip hidden">🎤 —</div>
+            </div>
+            <div class="timer-wrap">
+              <div id="timeBar" class="timebar"></div>
+              <div id="timer" class="timer-text">00:00</div>
+            </div>
+          </div>
+
+          <div id="wave" class="wave hidden" aria-hidden="true">
+            <div class="ring r1"></div>
+            <div class="ring r2"></div>
+            <div class="ring r3"></div>
+            <div class="center-dot">🔊</div>
+          </div>
+
+          <div id="recorderView" class="recorder-view hidden">
+            <div class="secret">
+              <div class="secret-title">Ton mot</div>
+              <div id="secretWordDisplay" class="secret-word">—</div>
+            </div>
+            <div id="recorderWait" class="recorder-wait hidden">En attente des devineurs…</div>
+          </div>
+
+          <div id="recorderControls" class="recorder-controls hidden">
+            <button id="startRecBtn" class="btn primary">Démarrer enregistrement</button>
+            <button id="stopRecBtn" class="btn" disabled>Arrêter</button>
+            <button id="newWordInRoundBtn" class="btn">Nouveau mot</button>
+          </div>
+
+          <div id="waitingView" class="waiting-view hidden">
+            <div id="waitingMsg" class="waiting-msg">🎤 Attends quelques secondes…</div>
+            <div class="loader-pulse"></div>
+          </div>
+
+          <div id="guessView" class="guess-view">
+            <div id="enableSoundWrap" class="enable-sound hidden">
+              <button id="enableSoundBtn" class="btn">Activer le son</button>
+            </div>
+            <div class="info">Le son se joue automatiquement 🎧</div>
+            <div class="panels">
+              <div id="panelChat" class="panel active card inner">
+                <h3>Chat</h3>
+                <div id="chatLog" class="log"></div>
+                <div id="chatRow" class="row">
+                  <input id="chatInput" class="input" placeholder="Votre proposition..." enterkeyhint="send" />
+                  <button id="sendChatBtn" class="btn" disabled>Envoyer</button>
+                </div>
+              </div>
+              <div id="panelScores" class="panel card inner">
+                <h3>Scoreboard</h3>
+                <ul id="scores" class="scores"></ul>
+                <h3>Replays</h3>
+                <div id="replays"></div>
+              </div>
+            </div>
+            <nav id="bottomTabs" class="bottom-tabs hidden">
+              <button id="tabChat" class="tab active">💬 Chat</button>
+              <button id="tabScores" class="tab">🏆 Scores</button>
+            </nav>
+          </div>
+        </div>
+      </section>
+
+      <section id="ended" class="card narrow hidden ended-screen">
+        <h2 id="endedTitle" class="ended-title">🎉 Fin de partie !</h2>
+        <div id="podium" class="podium">
+          <div class="place silver">
+            <div class="medal">🥈</div>
+            <div class="name" id="podiumSilverName">—</div>
+            <div class="score" id="podiumSilverScore">0</div>
+          </div>
+          <div class="place gold">
+            <div class="medal">🥇</div>
+            <div class="name" id="podiumGoldName">—</div>
+            <div class="score" id="podiumGoldScore">0</div>
+          </div>
+          <div class="place bronze">
+            <div class="medal">🥉</div>
+            <div class="name" id="podiumBronzeName">—</div>
+            <div class="score" id="podiumBronzeScore">0</div>
+          </div>
+        </div>
+        <div class="leaderboard-wrap">
+          <ul id="leaderboardFull" class="leaderboard"></ul>
+        </div>
+        <div id="restartWrap" class="row restart-wrap" style="margin-top:16px;">
+          <button id="restartBtn" class="btn primary">Rejouer une partie</button>
+        </div>
+        <h3>Replays</h3>
+        <div id="finalReplays" class="replays-list"></div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/client.js" type="module"></script>
+</body>
+</html>

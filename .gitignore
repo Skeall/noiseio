@@ -1,0 +1,4 @@
+node_modules/
+server.out
+public/.DS_Store
+public/assets/.DS_Store

@@ -1,0 +1,14 @@
+{
+  "name": "NOISE.IO",
+  "short_name": "Noise",
+  "description": "Le jeu où tu bruites pour faire deviner 🎤",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#faf7ff",
+  "theme_color": "#a57bff",
+  "icons": [
+    { "src": "/assets/ui/echos.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/assets/ui/echos.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}
