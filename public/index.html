@@ -24,23 +24,24 @@
         <h1>NOISE.IO</h1>
         <div id="roomInfo" class="room-info"></div>
       </div>
-      <div class="row">
-        <div id="echoWallet" class="echo-wallet">
-          <img src="/assets/ui/echos.png" alt="Échos" class="coin" />
-          <span id="echoBalance">0</span>
+      <div class="row header-row">
+        <div class="header-left">
+          <button id="openAvatarBtn" class="avatar-chip" aria-label="Changer d’avatar">
+            <img id="avatarChipImg" src="/assets/avatars/skin1.png" alt="Avatar" />
+          </button>
+          <span id="greetName" class="greet-name">Salut 👋</span>
         </div>
-        <button id="openAvatarBtn" class="avatar-chip" aria-label="Changer d’avatar">
-          <img id="avatarChipImg" src="/assets/avatars/skin1.png" alt="Avatar" />
-        </button>
-        <div id="statusBanner" class="status-banner hidden">Prêt ?</div>
+        <div class="header-right">
+          <div id="echoWallet" class="echo-wallet">
+            <img src="/assets/ui/echos.png" alt="Échos" class="coin" />
+            <span id="echoBalance">0</span>
+          </div>
+        </div>
       </div>
+      <div id="statusBanner" class="status-banner hidden">Prêt ?</div>
     </header>
 
-    <!-- Echo wallet floating chip on home (main menu) -->
-    <div id="echoFab" class="echo-fab" aria-hidden="false">
-      <img src="/assets/ui/echos.png" alt="Échos" class="coin" />
-      <span id="echoBalanceHome">0</span>
-    </div>
+    
 
     <main class="main">
       <section id="home" class="landing card center">
@@ -59,11 +60,28 @@
           <div class="actions">
             <button id="playNowBtn" class="btn primary big">🎮 Jouer maintenant</button>
             <button id="openJoinBtn" class="btn ghost big">🔑 Rejoindre un lobby</button>
+            <button id="openShopBtn" class="btn ghost big">🛍️ Boutique</button>
             <div id="joinRowHome" class="row join-row hidden">
               <input id="joinCodeHome" class="input" placeholder="Code de lobby" maxlength="6" />
               <button id="joinGoBtn" class="btn">→</button>
             </div>
           </div>
+        </div>
+      </section>
+
+      <!-- Shop screen -->
+      <section id="shop" class="card narrow hidden shop-screen">
+        <div class="row between shop-top">
+          <button id="shopBackBtn" class="btn ghost">← Accueil</button>
+          <div id="shopTimer" class="shop-timer">🕒 Nouveau stock dans --:--:--</div>
+        </div>
+        <div id="shopGrid" class="shop-grid"></div>
+        <div class="card inner chest-card">
+          <div class="row between">
+            <h3>🎁 Coffre gratuit du jour</h3>
+            <div id="chestStatus" class="muted">Disponible</div>
+          </div>
+          <button id="openChestBtn" class="btn primary">Ouvrir</button>
         </div>
       </section>
       
@@ -115,6 +133,7 @@
 
       <section id="round" class="hidden">
         <div class="card narrow">
+          <div id="recorderBubbles" class="recorder-bubbles" aria-hidden="true"></div>
           <div class="round-header">
             <div class="round-top">
               <div id="turnLabel" class="turn-label">Manche en cours</div>
@@ -206,11 +225,18 @@
         <div id="restartWrap" class="row restart-wrap" style="margin-top:16px;">
           <button id="restartBtn" class="btn primary">Rejouer une partie</button>
         </div>
+        <div id="backHomeWrap" class="row" style="margin-top:8px;">
+          <button id="backHomeBtn" class="btn ghost">← Accueil</button>
+        </div>
         <h3>Replays</h3>
         <div id="finalReplays" class="replays-list"></div>
       </section>
     </main>
   </div>
+
+  <!-- Overlays: recorder bubbles + winner toast -->
+  <div id="bubblesLayer" class="bubbles-layer hidden" aria-hidden="true"></div>
+  <div id="winnerToast" class="winner-toast hidden" aria-live="polite" role="status"></div>
 
   <script src="/client.js" type="module"></script>
 </body>

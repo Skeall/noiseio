@@ -71,6 +71,7 @@ const els = {
   lobby: document.getElementById('lobby'),
   round: document.getElementById('round'),
   ended: document.getElementById('ended'),
+  shop: document.getElementById('shop'),
   nickname: document.getElementById('nickname'),
   createBtn: document.getElementById('createBtn'),
   joinCode: document.getElementById('joinCode'),
@@ -119,6 +120,7 @@ const els = {
   podiumSilverScore: document.getElementById('podiumSilverScore'),
   podiumBronzeName: document.getElementById('podiumBronzeName'),
   podiumBronzeScore: document.getElementById('podiumBronzeScore'),
+  backHomeBtn: document.getElementById('backHomeBtn'),
   openJoinBtn: document.getElementById('openJoinBtn'),
   joinRowHome: document.getElementById('joinRowHome'),
   joinCodeHome: document.getElementById('joinCodeHome'),
@@ -135,6 +137,17 @@ const els = {
   avatarGrid: document.getElementById('avatarGrid'),
   openAvatarBtn: document.getElementById('openAvatarBtn'),
   avatarChipImg: document.getElementById('avatarChipImg'),
+  greetName: document.getElementById('greetName'),
+  recorderBubbles: document.getElementById('recorderBubbles'),
+  bubblesLayer: document.getElementById('bubblesLayer'),
+  winnerToast: document.getElementById('winnerToast'),
+  // Shop UI
+  openShopBtn: document.getElementById('openShopBtn'),
+  shopBackBtn: document.getElementById('shopBackBtn'),
+  shopGrid: document.getElementById('shopGrid'),
+  shopTimer: document.getElementById('shopTimer'),
+  openChestBtn: document.getElementById('openChestBtn'),
+  chestStatus: document.getElementById('chestStatus'),
 };
 
 let ws;
@@ -327,6 +340,65 @@ function ding(stronger = false) {
 
 function vibrate(ms = 80) { try { if (navigator.vibrate) navigator.vibrate(ms); } catch {} }
 
+// Recorder bubbles + winner toast helpers
+function randomPastel() {
+  const arr = [
+    'rgba(165,123,255,0.75)', // violet
+    'rgba(76,201,240,0.75)',  // bleu
+    'rgba(255,138,101,0.75)', // orange
+    'rgba(120,220,160,0.75)', // vert
+    'rgba(255,209,102,0.75)', // jaune
+    'rgba(238,153,255,0.75)'  // rose
+  ];
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function spawnBubble(text, fromId = '') {
+  if (!isRecorder) return; // visible uniquement pour le Sound Maker
+  const targets = [els.recorderBubbles, els.bubblesLayer].filter(Boolean);
+  if (targets.length === 0) return;
+  const make = (layer) => {
+    try { layer.classList.remove('hidden'); } catch {}
+    while (layer.children.length >= 10) { layer.removeChild(layer.firstChild); }
+    const b = document.createElement('div');
+    b.className = 'bubble anim';
+    if (Math.random() < 0.4) b.classList.add('small');
+    if (Math.random() > 0.7) b.classList.add('big');
+    b.textContent = text;
+    const leftPct = 10 + Math.random() * 80;
+    b.style.left = `${leftPct.toFixed(1)}%`;
+    b.style.background = randomPastel();
+    b.style.setProperty('--dx', `${(Math.random() * 80 - 40).toFixed(0)}px`);
+    b.style.setProperty('--dur', '5000ms');
+    b.style.border = '2px solid rgba(255,255,255,0.7)';
+    b.style.backdropFilter = 'blur(8px)';
+    b.addEventListener('animationend', () => { try { layer.removeChild(b); } catch {} });
+    layer.appendChild(b);
+  };
+  targets.forEach(make);
+  try { plop(); } catch {}
+}
+
+function showWinnerToast(winnerId, winnerName) {
+  const toast = els.winnerToast; if (!toast) return;
+  toast.innerHTML = '';
+  const av = document.createElement('div'); av.className = 'avatar'; av.style.background = colorForId(winnerId || winnerName || 'x'); av.textContent = (winnerName || '?').slice(0,1).toUpperCase();
+  const txtWrap = document.createElement('div');
+  const name = document.createElement('div'); name.className = 'name'; name.textContent = winnerName || '—';
+  const sub = document.createElement('div'); sub.className = 'sub'; sub.textContent = 'a deviné le mot !';
+  txtWrap.appendChild(name); txtWrap.appendChild(sub);
+  toast.appendChild(av); toast.appendChild(txtWrap);
+  toast.classList.remove('hidden');
+  toast.style.opacity = '0';
+  toast.style.animation = 'toastIn 320ms ease-out forwards';
+  try { confetti({ particleCount: 90, spread: 60, origin: { y: 0.6 } }); } catch {}
+  vibrate(40);
+  setTimeout(() => {
+    try { toast.style.animation = 'toastOut 300ms ease-in forwards'; } catch {}
+    setTimeout(() => { try { toast.classList.add('hidden'); } catch {} }, 320);
+  }, 2000);
+}
+
 function setStatusBanner(text, kind = 'info') {
   const el = els.statusBanner;
   el.textContent = text || '';
@@ -374,6 +446,7 @@ function show(section) {
   els.lobby.classList.add('hidden');
   els.round.classList.add('hidden');
   els.ended.classList.add('hidden');
+  try { els.shop.classList.add('hidden'); } catch {}
   const target = (section || els.auth);
   target.classList.remove('hidden');
   try { target.classList.add('fade-in'); setTimeout(() => target.classList.remove('fade-in'), 300); } catch {}
@@ -636,6 +709,8 @@ function connectWS() {
       currentSecretNorm = normalizeTextLocal(payload.word);
       try { els.secretWordDisplay.textContent = payload.word; } catch {}
       try { els.recorderView.classList.remove('hidden'); } catch {}
+      // Prepare bubbles layer immediately for recorder
+      try { (els.recorderBubbles || els.bubblesLayer)?.classList.remove('hidden'); console.log('[bubbles] layer visible (secret)'); } catch {}
       return;
     }
 
@@ -656,14 +731,24 @@ function connectWS() {
         try { els.startRecBtn.disabled = false; els.stopRecBtn.disabled = true; } catch {}
         document.body.classList.add('role-recorder');
         document.body.classList.remove('role-guesser');
+        // Afficher la couche de bulles pour le Sound Maker
+        try {
+          (els.recorderBubbles || els.bubblesLayer)?.classList.remove('hidden');
+          console.log('[bubbles] layer visible (roundStarted)');
+        } catch {}
       } else {
         els.recorderControls.classList.add('hidden');
         els.recorderView.classList.add('hidden');
         els.waitingView.classList.remove('hidden');
-        try { els.waitingMsg.textContent = `🎤 Attends quelques secondes pendant que ${payload.byName} bruit son mot mystère…`; } catch {}
+        try { els.waitingMsg.textContent = ` Attends quelques secondes pendant que ${payload.byName} bruit son mot mystère…`; } catch {}
         els.guessView.classList.add('hidden');
         document.body.classList.add('role-guesser');
         document.body.classList.remove('role-recorder');
+        // Masquer les bulles côté devineurs
+        try {
+          (els.recorderBubbles || els.bubblesLayer)?.classList.add('hidden');
+          console.log('[bubbles] layer hidden (not recorder)');
+        } catch {}
       }
       try { document.body.classList.remove('timeup'); } catch {}
       stopAudioLoop(true);
@@ -715,6 +800,17 @@ function connectWS() {
           vibrate(20);
         }
       }
+      // Bulles animées visibles uniquement chez le Sound Maker
+      try {
+        if (isRecorder) {
+          console.log('[bubbles] spawn', { from: payload.from, text: payload.text });
+          // Safety: ensure layer visible at each spawn
+          try { els.bubblesLayer.classList.remove('hidden'); } catch {}
+          spawnBubble(payload.text, payload.fromId);
+        } else {
+          console.log('[bubbles] skip (not recorder)');
+        }
+      } catch (e) { console.warn('[bubbles] error', e); }
       return;
     }
 
@@ -728,6 +824,8 @@ function connectWS() {
       logMsg(`✅ ${payload.winner} a trouvé ! Réponse: ${payload.answer}`);
       lastCorrectAnswer = payload.answer || '';
       try { confetti({ spread: 70, ticks: 200, origin: { y: 0.6 } }); } catch {}
+      // Toast gagnant pour le Sound Maker
+      try { if (isRecorder) { showWinnerToast(payload.winnerId, payload.winner); ding(true); } } catch {}
       if (payload.winnerId === myId) {
         document.body.classList.add('flash'); vibrate(120); setTimeout(() => document.body.classList.remove('flash'), 700);
         addEchos(3, 'correct');
@@ -768,6 +866,8 @@ function connectWS() {
       stopGuessTimer();
       // On timeout, stop scheduling but let current loop end naturally
       stopAudioLoop(false);
+      // Masquer overlays
+      try { els.bubblesLayer.classList.add('hidden'); els.winnerToast.classList.add('hidden'); } catch {}
       try { document.body.classList.remove('role-recorder'); document.body.classList.remove('role-guesser'); } catch {}
       show(els.lobby);
       updateRoomUI(snapshot);
@@ -776,6 +876,7 @@ function connectWS() {
 
     if (type === 'roundAborted') {
       logMsg('⚠️ Manche annulée: ' + payload.reason);
+      try { els.bubblesLayer.classList.add('hidden'); els.winnerToast.classList.add('hidden'); } catch {}
       show(els.lobby);
       return;
     }
@@ -819,6 +920,7 @@ function connectWS() {
       setStatusBanner('Fin de partie !', 'info');
       stopRoundTimer();
       if (snapshot) snapshot.current = null;
+      try { els.bubblesLayer.classList.add('hidden'); els.winnerToast.classList.add('hidden'); } catch {}
       // Slower celebratory transition to end screen
       setTimeout(() => { show(els.ended); try { confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 } }); } catch {} }, 900);
       return;
@@ -891,6 +993,15 @@ try {
     setStatusBanner('Nouvelle partie !', 'info');
     send('restartParty', {});
     show(els.lobby);
+  });
+} catch {}
+
+// Back to home from end screen
+try {
+  els.backHomeBtn.addEventListener('click', () => {
+    console.log('[ui] backHomeBtn clicked');
+    vibrate(10);
+    show(els.home);
   });
 } catch {}
 
@@ -1068,6 +1179,12 @@ els.stopRecBtn.addEventListener('click', stopRecording);
 // Initial: ensure local profile and echoes visible on home menu
 try { ensureAvatar(); } catch {}
 try { loadEchoBalance(); } catch {}
+// Set greeting silently using stored nickname (no prompt on landing)
+try {
+  const nick = (localStorage.getItem('noiseio_nick') || 'Player').toString().trim();
+  if (els.greetName) els.greetName.textContent = `Salut ${nick} 👋`;
+  console.log('[ui] greet set for', nick);
+} catch {}
 // Show home (or auth if older flow)
 show(els.home || els.auth);
 try { els.startRoundBtn.disabled = true; } catch {}
@@ -1080,4 +1197,190 @@ try {
 // Random word button (only next recorder should use it, UI gate below)
 try { els.newWordBtn.addEventListener('click', () => { send('newWord', {}); }); } catch {}
 try { els.newWordInRoundBtn.addEventListener('click', () => { send('newWord', {}); }); } catch {}
+
+
+// ==========================
+// Boutique Dynamique (MVP)
+// ==========================
+
+// Raretés, catalogue, et prix indicatifs
+const SHOP_RARITIES = {
+  common: { key: 'common', label: 'Commun', color: '#78dca0', min: 50, max: 100, cls: 'rarity-common' },
+  rare: { key: 'rare', label: 'Rare', color: '#50b4ff', min: 200, max: 300, cls: 'rarity-rare' },
+  epic: { key: 'epic', label: 'Épique', color: '#a57bff', min: 380, max: 420, cls: 'rarity-epic' },
+  legendary: { key: 'legendary', label: 'Légendaire', color: '#ffd166', min: 600, max: 1000, cls: 'rarity-legendary' },
+};
+
+// Catalogue (mappé aux assets d'avatars existants)
+const CATALOG = {
+  common: ['skin1.png','skin2.png','skin3.png','skin4.png','skin5.png'],
+  rare: ['skin6.png','skin7.png','skin8.png'],
+  epic: ['skin9.png','skin10.png','skin11.png','skin12.png'],
+  legendary: ['skin13.png','skin14.png','skin15.png','skin16.png']
+};
+
+// Stockage local
+const LS_OWNED = 'noiseio_owned_skins';
+const LS_DAILY_PREFIX = 'noiseio_shop_';
+const LS_CHEST_DAY = 'noiseio_chest_day';
+
+function getOwnedSkins() {
+  try { return JSON.parse(localStorage.getItem(LS_OWNED) || '[]'); } catch { return []; }
+}
+function setOwnedSkins(arr) {
+  try { localStorage.setItem(LS_OWNED, JSON.stringify(arr || [])); } catch {}
+}
+function isOwned(file) { try { return getOwnedSkins().includes(file); } catch { return false; } }
+function addOwned(file) {
+  const set = new Set(getOwnedSkins()); set.add(file); setOwnedSkins([...set]);
+}
+
+// Jour local (clé) et minuit local
+function localDayKey() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,'0');
+  const day = String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+}
+function msUntilNextMidnightLocal() {
+  const d = new Date();
+  const next = new Date(d.getFullYear(), d.getMonth(), d.getDate()+1, 0, 0, 0, 0);
+  return Math.max(0, next - d);
+}
+
+// RNG déterministe (par jour) pour une rotation stable
+function hashString(s) { let h = 2166136261; for (let i=0;i<s.length;i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 16777619);} return h>>>0; }
+function makeRng(seedStr) {
+  let s = hashString(seedStr) || 123456789;
+  return () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 2**32; };
+}
+
+function pickInt(rng, min, max) { return Math.floor(rng() * (max - min + 1)) + min; }
+
+// Construire la sélection du jour (4 items uniques), pondérée par rareté
+function buildDailyShop() {
+  const key = localDayKey();
+  const cacheKey = LS_DAILY_PREFIX + key;
+  try {
+    const cached = localStorage.getItem(cacheKey);
+    if (cached) return JSON.parse(cached);
+  } catch {}
+  const rng = makeRng(key);
+  const pool = [];
+  const pushWeighted = (rarityKey, files, weight) => { files.forEach(f => { pool.push({ rarity: rarityKey, file: f, w: weight }); }); };
+  pushWeighted('common', CATALOG.common, 60);
+  pushWeighted('rare', CATALOG.rare, 25);
+  pushWeighted('epic', CATALOG.epic, 10);
+  pushWeighted('legendary', CATALOG.legendary, 5);
+  // Tirage pondéré unique
+  const picks = [];
+  const pickedFiles = new Set();
+  const totalWeight = pool.reduce((a,b)=>a+b.w,0);
+  for (let i=0; i<4; i++) {
+    let r = rng() * totalWeight;
+    let choice = pool[0];
+    for (const it of pool) { r -= it.w; if (r <= 0) { choice = it; break; } }
+    // éviter doublons
+    let safety = 0;
+    while (pickedFiles.has(choice.file) && safety++ < 20) {
+      choice = pool[pickInt(rng, 0, pool.length-1)];
+    }
+    pickedFiles.add(choice.file);
+    const rar = SHOP_RARITIES[choice.rarity];
+    const price = (choice.rarity === 'epic') ? 400 : pickInt(rng, rar.min, rar.max);
+    picks.push({ file: choice.file, rarity: choice.rarity, price });
+  }
+  try { localStorage.setItem(cacheKey, JSON.stringify(picks)); } catch {}
+  return picks;
+}
+
+// Rendu UI de la boutique
+function renderShop() {
+  try { loadEchoBalance(); } catch {}
+  const items = buildDailyShop();
+  els.shopGrid.innerHTML = '';
+  items.forEach((it, idx) => {
+    const rar = SHOP_RARITIES[it.rarity];
+    const card = document.createElement('div'); card.className = `shop-card ${rar.cls}`;
+    const imgWrap = document.createElement('div'); imgWrap.className = 'img';
+    const halo = document.createElement('div'); halo.className = 'halo'; imgWrap.appendChild(halo);
+    const img = document.createElement('img'); img.src = avatarUrl(it.file); img.alt = it.file; imgWrap.appendChild(img);
+    const name = document.createElement('div'); name.className = 'name'; name.textContent = it.file.replace(/\.png$/,'');
+    const price = document.createElement('div'); price.className = 'price'; price.textContent = `${it.price} Échos`;
+    const btn = document.createElement('button'); btn.className = 'buy-btn btn'; btn.textContent = 'Acheter';
+    const owned = isOwned(it.file);
+    const notEnough = !owned && (echoBalance < it.price);
+    if (owned) { btn.textContent = 'Possédé'; btn.disabled = true; card.classList.add('owned'); }
+    else if (notEnough) { btn.disabled = true; }
+    btn.addEventListener('click', () => {
+      // Achat: déduire le solde et marquer comme possédé
+      if (isOwned(it.file)) return;
+      if (echoBalance < it.price) { setStatusBanner('Pas assez d\'Échos', 'danger'); vibrate(60); return; }
+      addEchos(-it.price, 'achat'); // simple déduction
+      addOwned(it.file);
+      try { confetti({ spread: 70, particleCount: 120, origin: { y: 0.6 } }); } catch {}
+      plop(); vibrate(30);
+      btn.textContent = 'Possédé'; btn.disabled = true; card.classList.add('owned');
+    });
+    card.appendChild(imgWrap); card.appendChild(name); card.appendChild(price); card.appendChild(btn);
+    els.shopGrid.appendChild(card);
+  });
+}
+
+// Timer de rotation vers minuit local
+let shopTimerItv = null;
+function startShopTimer() {
+  if (shopTimerItv) clearInterval(shopTimerItv);
+  const update = () => {
+    const ms = msUntilNextMidnightLocal();
+    const h = Math.floor(ms/3600000);
+    const m = Math.floor((ms%3600000)/60000);
+    const s = Math.floor((ms%60000)/1000);
+    els.shopTimer.textContent = `🕒 Nouveau stock dans ${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    if (ms <= 1000) {
+      // Invalidate cache et re-render
+      try { localStorage.removeItem(LS_DAILY_PREFIX + localDayKey()); } catch {}
+      renderShop();
+    }
+  };
+  update();
+  shopTimerItv = setInterval(update, 1000);
+}
+
+// Coffre gratuit du jour
+function chestAvailableToday() {
+  try { return localStorage.getItem(LS_CHEST_DAY) !== localDayKey(); } catch { return true; }
+}
+function markChestOpened() { try { localStorage.setItem(LS_CHEST_DAY, localDayKey()); } catch {} }
+function renderChest() {
+  const available = chestAvailableToday();
+  els.openChestBtn.disabled = !available;
+  els.chestStatus.textContent = available ? 'Disponible' : 'Déjà ouvert';
+}
+try {
+  els.openChestBtn.addEventListener('click', () => {
+    if (!chestAvailableToday()) return;
+    const rng = makeRng('chest-' + localDayKey());
+    const reward = pickInt(rng, 10, 30);
+    addEchos(reward, 'coffre');
+    markChestOpened();
+    try { confetti({ spread: 80, particleCount: 150, origin: { y: 0.6 } }); } catch {}
+    plop(); vibrate(40);
+    renderChest();
+  });
+} catch {}
+
+// Navigation Boutique
+try {
+  els.openShopBtn.addEventListener('click', () => {
+    renderShop(); startShopTimer(); renderChest();
+    show(els.shop);
+  });
+} catch {}
+try {
+  els.shopBackBtn.addEventListener('click', () => {
+    show(els.home);
+  });
+} catch {}
 
