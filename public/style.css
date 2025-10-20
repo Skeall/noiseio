@@ -163,9 +163,27 @@ audio { display: block; margin: 6px 0; width: 100%; }
 .round-top { display: flex; align-items: center; gap: 8px; }
 .turn-label { font-weight: 700; padding: 8px 12px; background: #fbf8ff; border-radius: 12px; }
 .recorder-chip { padding: 6px 10px; border-radius: 999px; background: #fff0f5; color: #b00053; font-weight: 600; box-shadow: var(--shadow); }
+.timer-badge { display: inline-flex; align-items: center; justify-content: center; margin-left: 8px; padding: 2px 8px; height: 22px; border-radius: 8px; font-weight: 800; font-size: 12px; letter-spacing: .3px; background: #eaf7ea; color: #2b8a3e; box-shadow: 0 1px 2px rgba(0,0,0,.06) inset; }
+.timer-badge.warn { background: #fff3cd; color: #b8860b; }
+.timer-badge.danger { background: #ffe3e3; color: #c92a2a; }
+.guesser-timer { display: flex; justify-content: flex-end; margin: 6px 8px 8px; }
 .timer-wrap { position: relative; flex: 1; height: 16px; background: #f1e9ff; border-radius: 999px; overflow: hidden; }
-.timebar { position: absolute; inset: 0; width: 100%; background: linear-gradient(90deg, var(--primary), #ff6b6b); transform-origin: left; transition: width 0.2s linear; }
-.timer-text { position: absolute; inset: 0; display: grid; place-items: center; font-variant-numeric: tabular-nums; font-size: 12px; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,0.25); }
+.timebar { position: absolute; inset: 0; width: 100%; background: linear-gradient(90deg, var(--primary), #ff6b6b); transform-origin: left; transition: width 0.2s linear, background 180ms linear; }
+.timer-text { position: absolute; inset: 0; display: grid; place-items: center; font-variant-numeric: tabular-nums; font-size: 12px; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,0.25); transition: transform 120ms ease, color 120ms ease, filter 120ms ease; }
+/* Chrono immersive states */
+.timer-wrap.ok .timebar { background: linear-gradient(90deg, #69db7c, #a0e57a); }
+.timer-wrap.warn .timebar { background: linear-gradient(90deg, #ffb74d, #ff9800); }
+.timer-wrap.danger .timebar { background: linear-gradient(90deg, #ff6b6b, #ff3b3b); }
+.timer-wrap.focus .timer-text { transform: scale(1.05); filter: drop-shadow(0 2px 6px rgba(255,0,0,.15)); }
+.timer-text.pulse { animation: timerPulse 220ms ease-out; }
+@keyframes timerPulse { 0% { transform: scale(1); } 50% { transform: scale(1.1); } 100% { transform: scale(1); } }
+.timer-text.blink { animation: timerBlink 1000ms steps(2, jump-none) infinite; }
+@keyframes timerBlink { 0% { opacity: 1; } 50% { opacity: .5; } 100% { opacity: 1; } }
+.timer-wrap.halo::after { content: ""; position: absolute; inset: -6px; border-radius: 999px; background: radial-gradient(circle, rgba(255,0,0,.16) 0, rgba(255,0,0,0) 65%); pointer-events: none; animation: haloFlash 260ms ease-out; }
+@keyframes haloFlash { from { opacity: 0; } to { opacity: 1; } }
+/* Card beat in last 5s */
+#round .card.narrow.card-beat { animation: cardBeat 1000ms ease-in-out infinite; }
+@keyframes cardBeat { 0% { transform: scale(1); } 30% { transform: scale(1.01); } 60% { transform: scale(1); } 100% { transform: scale(1); } }
 
 .recorder-controls { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; }
 /* Recorder primary actions */

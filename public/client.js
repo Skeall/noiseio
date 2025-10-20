@@ -2,6 +2,106 @@ function showWave(on) {
   try { els.wave.classList.toggle('hidden', !on); } catch {}
 }
 
+// Subtle tick (last 5s)
+function playTick() { /* disabled per UX */ }
+
+// Gentle time-up cue
+function playTimeUp() {
+  try {
+    if (!allowSound) return;
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const g = audioCtx.createGain(); g.gain.value = 0.25; g.connect(audioCtx.destination);
+    const o = audioCtx.createOscillator(); o.type = 'sine'; o.frequency.setValueAtTime(440, audioCtx.currentTime);
+    o.frequency.exponentialRampToValueAtTime(180, audioCtx.currentTime + 0.25);
+    o.connect(g); o.start(); setTimeout(() => { try { o.stop(); } catch {} }, 260);
+  } catch {}
+}
+
+function getTimerWrap() {
+  try { return els.timer.closest('.timer-wrap'); } catch { return null; }
+}
+
+function setTimerClasses(remainMs) {
+  const wrap = getTimerWrap(); if (!wrap) return;
+  const sec = Math.ceil(remainMs / 1000);
+  wrap.classList.remove('ok','warn','danger','focus');
+  if (sec > 10) wrap.classList.add('ok');
+  else if (sec > 5) { wrap.classList.add('warn'); }
+  else { wrap.classList.add('danger'); }
+  try {
+    els.timerBadge.classList.remove('warn','danger');
+    if (sec <= 5) els.timerBadge.classList.add('danger');
+    else if (sec <= 10) els.timerBadge.classList.add('warn');
+    if (els.guesserTimerBadge) {
+      els.guesserTimerBadge.classList.remove('warn','danger');
+      if (sec <= 5) els.guesserTimerBadge.classList.add('danger');
+      else if (sec <= 10) els.guesserTimerBadge.classList.add('warn');
+    }
+  } catch {}
+  // Blink in last 5s
+  try {
+    if (sec <= 5) els.timer.classList.add('blink'); else els.timer.classList.remove('blink');
+  } catch {}
+  // Card beat last 5s
+  try {
+    const card = document.querySelector('#round .card.narrow');
+    if (card) { card.classList.remove('card-beat'); }
+  } catch {}
+}
+
+function updateChronoUI(elapsed, total) {
+  const remain = Math.max(0, total - elapsed);
+  els.timer.textContent = formatTime(remain);
+  try {
+    els.timerBadge.textContent = formatTime(remain);
+    if (els.guesserTimerBadge) els.guesserTimerBadge.textContent = formatTime(remain);
+  } catch {}
+  const pct = Math.max(0, 1 - (elapsed / total));
+  els.timeBar.style.width = `${(pct * 100).toFixed(1)}%`;
+  setTimerClasses(remain);
+  const s = Math.ceil(remain / 1000);
+  if (s !== chronoLastSec) {
+    chronoLastSec = s;
+    // No pulse/halo on the bar to avoid perceived pulsing
+    if (s <= 5 && s > 0) { playTick(); /* vibration removed per UX */ }
+  }
+}
+
+function startChrono(totalMs) {
+  try { clearInterval(chronoTimer); } catch {}
+  chronoTotalMs = totalMs; chronoStartAt = Date.now(); chronoLastSec = null; tickingActive = true;
+  updateChronoUI(0, chronoTotalMs);
+  try {
+    els.timerBadge.classList.remove('hidden','warn','danger');
+    if (els.guesserTimer) els.guesserTimer.classList.remove('hidden');
+    if (els.guesserTimerBadge) els.guesserTimerBadge.classList.remove('warn','danger');
+  } catch {}
+  chronoTimer = setInterval(() => {
+    const elapsed = Date.now() - chronoStartAt;
+    updateChronoUI(elapsed, chronoTotalMs);
+    if (elapsed >= chronoTotalMs) {
+      clearInterval(chronoTimer); chronoTimer = null; tickingActive = false;
+      playTimeUp(); try { document.body.classList.add('timeup'); setTimeout(() => document.body.classList.remove('timeup'), 800); } catch {}
+    }
+  }, 120);
+  console.log('[ui] chrono started', totalMs);
+}
+
+function stopChrono() {
+  if (chronoTimer) { clearInterval(chronoTimer); chronoTimer = null; }
+  tickingActive = false; chronoTotalMs = 0; chronoStartAt = 0; chronoLastSec = null;
+  try { els.timer.classList.remove('pulse','blink'); } catch {}
+  // Ensure pulse class is not used anymore
+  try { els.timer.classList.remove('pulse'); } catch {}
+  try { const wrap = getTimerWrap(); if (wrap) wrap.classList.remove('ok','warn','danger','focus','halo'); } catch {}
+  try {
+    els.timerBadge.classList.add('hidden'); els.timerBadge.classList.remove('warn','danger');
+    if (els.guesserTimer) els.guesserTimer.classList.add('hidden');
+    if (els.guesserTimerBadge) els.guesserTimerBadge.classList.remove('warn','danger');
+  } catch {}
+  console.log('[ui] chrono stopped');
+}
+
 function plop() {
   try {
     if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -86,6 +186,9 @@ const els = {
   stopRecBtn: document.getElementById('stopRecBtn'),
   timer: document.getElementById('timer'),
   timeBar: document.getElementById('timeBar'),
+  timerBadge: document.getElementById('timerBadge'),
+  guesserTimer: document.getElementById('guesserTimer'),
+  guesserTimerBadge: document.getElementById('guesserTimerBadge'),
   turnLabel: document.getElementById('turnLabel'),
   recorderChip: document.getElementById('recorderChip'),
   recorderView: document.getElementById('recorderView'),
@@ -229,7 +332,9 @@ function addEchos(n, reason = '') {
   try { setStatusBanner(`+${n} Échos`, 'success'); setTimeout(clearStatusBanner, 1200); } catch {}
   vibrate(12);
 }
-let recTimer = null;
+let recTimer = null; // interval watchdog for 5s cap during recording
+let isRecordingNow = false; // flag to avoid duplicate stop UI logic
+let guessPhaseStarted = false; // ensure we don't restart 20s guess phase multiple times on recorder side
 let audioCtx = null;
 let chosenMime = '';
 let roundTimer = null;
@@ -249,12 +354,28 @@ let currentReplayAudio = null;
 let lastPlayersCount = 0;
 let myAvatar = null;
 let echoBalance = 0;
+// Immersive chrono state
+let chronoTimer = null;
+let chronoStartAt = 0;
+let chronoTotalMs = 0;
+let chronoLastSec = null;
+let tickingActive = false;
+const AUDIO_VOLUME_TICK = 0.2;
 
-// Word list for random prompts (50)
+// Word list for random prompts (aligned with server; no duplicates)
 const WORDS = [
+  // Base
   'chat','chien','vache','voiture','téléphone','porte','horloge','tambour','train','pluie',
   'aspirateur','hélicoptère','guitare','moto','oiseau','tonnerre','pizza','serpent','lion','bébé','marteau','râteau','sirène','robot','vent','réveil','cloche','singe','rire','machine à laver',
-  'dinosaure','photocopieuse','parapluie','volcan','cheval','chevalier','toilette','feu d’artifice','baleine','viking','zèbre','marteau-piqueur','popcorn','four','monstre','feu de camp','aspirine','friteuse','alien','canard qui parle'
+  'dinosaure','photocopieuse','parapluie','volcan','cheval','chevalier','toilette','feu d’artifice','baleine','viking','zèbre','marteau-piqueur','popcorn','four','monstre','feu de camp','aspirine','friteuse','alien','canard qui parle',
+  // Ajouts
+  'poule','mouton','cochon','grenouille','canard','avion','camion','bateau','vélo','tracteur','ambulance','fusée',
+  'sifflet','klaxon','éternuer','tousser','bailler','eau','feu','éléphant','abeille','loup','hibou','souris',
+  'moto-cross','piano','batterie','trompette','violon','flûte','saxophone','café','soda','soupe','chips','glaçons',
+  'orage','océan','forêt','nager','courir','sauter','tomber','dormir','imprimante','ordinateur','micro-ondes','lave-linge','ventilateur','tondeuse','perceuse','mixeur','climatisation',
+  'fantôme','zombie','fermeture éclair','escalier','ascenseur','fontaine','balançoire','skateboard',
+  'dauphin','hyène','chauve-souris','bébé qui pleure','vieux téléphone','moteur qui cale',
+  'lightsaber','t-rex','pacman','mario','pikachu','chewbacca','r2-d2','gollum','yoda','minions'
 ];
 
 function normalizeTextLocal(s) {
@@ -459,24 +580,23 @@ function startGuessTimer() {
   stopGuessTimer();
   guessStartAt = Date.now();
   setStatusBanner('Devinez ! (20s)', 'info');
+  try {
+    if (els.guesserTimer) els.guesserTimer.classList.remove('hidden');
+    if (els.guesserTimerBadge) { els.guesserTimerBadge.classList.remove('warn','danger'); els.guesserTimerBadge.textContent = '00:20'; }
+  } catch {}
+  startChrono(20000);
+  // Keep legacy handle to allow stopGuessTimer() to cancel separately if needed
   guessTimer = setInterval(() => {
     const elapsed = Date.now() - guessStartAt;
-    // reuse timer bar for 20s
-    const remain = Math.max(0, 20000 - elapsed);
-    els.timer.textContent = formatTime(20000 - remain);
-    const pct = Math.max(0, 1 - (elapsed / 20000));
-    els.timeBar.style.width = `${(pct * 100).toFixed(1)}%`;
-    if (elapsed >= 20000) {
-      clearInterval(guessTimer); guessTimer = null;
-      setStatusBanner("Time's up!", 'danger');
-      try { document.body.classList.add('timeup'); setTimeout(() => document.body.classList.remove('timeup'), 1000); } catch {}
-    }
-  }, 150);
+    if (elapsed >= 20000) { clearInterval(guessTimer); guessTimer = null; }
+  }, 300);
   console.log('[ui] guess timer started');
 }
 
 function stopGuessTimer() {
   if (guessTimer) { clearInterval(guessTimer); guessTimer = null; }
+  stopChrono();
+  try { if (els.guesserTimer) els.guesserTimer.classList.add('hidden'); } catch {}
 }
 
 function updateRoomUI(snap) {
@@ -708,7 +828,18 @@ function connectWS() {
       if (!payload?.word) return;
       currentSecretNorm = normalizeTextLocal(payload.word);
       try { els.secretWordDisplay.textContent = payload.word; } catch {}
-      try { els.recorderView.classList.remove('hidden'); } catch {}
+      try {
+        els.recorderView.classList.remove('hidden');
+        if (isRecorder) {
+          // Ensure recorder UI is ready to record
+          els.recorderControls.classList.remove('hidden');
+          els.recorderWait.classList.add('hidden');
+          els.startRecBtn.disabled = false;
+          els.stopRecBtn.disabled = true;
+          // Reset guess-phase flag when a new secret arrives for recorder
+          guessPhaseStarted = false;
+        }
+      } catch {}
       // Prepare bubbles layer immediately for recorder
       try { (els.recorderBubbles || els.bubblesLayer)?.classList.remove('hidden'); console.log('[bubbles] layer visible (secret)'); } catch {}
       return;
@@ -718,28 +849,29 @@ function connectWS() {
       isRecorder = (payload.byId === myId);
       els.chatLog.innerHTML = '';
       show(els.round);
+      // Reset any previous timers/audio state on new round
+      isRecordingNow = false; guessPhaseStarted = false;
+      try { if (recTimer) { clearInterval(recTimer); recTimer = null; } } catch {}
+      try { if (mediaRecorder && mediaRecorder.state !== 'inactive') { mediaRecorder.stop(); mediaRecorder.stream.getTracks().forEach(t => t.stop()); } } catch {}
+      try { stopGuessTimer(); } catch {}
+      try { stopAudioLoop(true); } catch {}
+      try { document.querySelector('.timer-wrap')?.classList.remove('hidden'); } catch {}
       if (isRecorder) {
         els.recorderControls.classList.remove('hidden');
         els.recorderView.classList.remove('hidden');
         els.waitingView.classList.add('hidden');
-        // Recorder: chat totalement masqué pendant l'enregistrement
-        els.guessView.classList.add('hidden');
-        els.chatRow.classList.add('hidden');
-        els.sendChatBtn.disabled = true;
-        try { els.chatInput.disabled = true; } catch {}
-        try { els.recorderWait.classList.add('hidden'); } catch {}
+        // Re-enable recording controls for the new recorder
         try { els.startRecBtn.disabled = false; els.stopRecBtn.disabled = true; } catch {}
-        document.body.classList.add('role-recorder');
-        document.body.classList.remove('role-guesser');
-        // Afficher la couche de bulles pour le Sound Maker
-        try {
-          (els.recorderBubbles || els.bubblesLayer)?.classList.remove('hidden');
-          console.log('[bubbles] layer visible (roundStarted)');
-        } catch {}
+        // Recorder should not see guess input
+        try { els.chatRow.classList.add('hidden'); els.chatInput.disabled = true; els.sendChatBtn.disabled = true; } catch {}
+        // Ensure recorder waiting note is hidden at start of their turn
+        try { els.recorderWait.classList.add('hidden'); } catch {}
       } else {
         els.recorderControls.classList.add('hidden');
         els.recorderView.classList.add('hidden');
         els.waitingView.classList.remove('hidden');
+        // Hide guesser badge until audio starts
+        try { if (els.guesserTimer) els.guesserTimer.classList.add('hidden'); } catch {}
         try { els.waitingMsg.textContent = ` Attends quelques secondes pendant que ${payload.byName} bruit son mot mystère…`; } catch {}
         els.guessView.classList.add('hidden');
         document.body.classList.add('role-guesser');
@@ -761,7 +893,8 @@ function connectWS() {
       setStatusBanner('Manche en cours', 'info');
       // Default to chat tab for guessing
       setActiveTab('chat');
-      // Do not start timer yet; wait for recording to begin
+      // Immersive 30s recording window for everyone
+      startChrono(30000);
       els.sendChatBtn.disabled = !els.chatInput.value.trim();
       logMsg(`Manche lancée par ${payload.byName}`);
       return;
@@ -779,7 +912,11 @@ function connectWS() {
       // Start 20s guess phase for receivers (recorder won't get this event)
       if (!isRecorder) {
         try { els.waitingView.classList.add('hidden'); els.guessView.classList.remove('hidden'); els.bottomTabs.classList.remove('hidden'); } catch {}
-        if (!guessTimer) startGuessTimer();
+        // Force restart of guess timer to ensure visibility
+        stopGuessTimer();
+        startGuessTimer();
+        // Ensure timer header is visible
+        try { document.querySelector('.timer-wrap')?.classList.remove('hidden'); } catch {}
         // Enable input for guessers
         try { els.chatRow.classList.remove('hidden'); els.chatInput.disabled = false; els.sendChatBtn.disabled = !els.chatInput.value.trim(); } catch {}
         // Prepare audio loop
@@ -821,6 +958,8 @@ function connectWS() {
     }
 
     if (type === 'correct') {
+      // Stop ticking immediately when a player finds the word
+      tickingActive = false;
       logMsg(`✅ ${payload.winner} a trouvé ! Réponse: ${payload.answer}`);
       lastCorrectAnswer = payload.answer || '';
       try { confetti({ spread: 70, ticks: 200, origin: { y: 0.6 } }); } catch {}
@@ -919,6 +1058,7 @@ function connectWS() {
       try { document.body.classList.remove('timeup'); } catch {}
       setStatusBanner('Fin de partie !', 'info');
       stopRoundTimer();
+      stopGuessTimer();
       if (snapshot) snapshot.current = null;
       try { els.bubblesLayer.classList.add('hidden'); els.winnerToast.classList.add('hidden'); } catch {}
       // Slower celebratory transition to end screen
@@ -1125,14 +1265,13 @@ async function startRecording() {
 
     els.startRecBtn.disabled = true;
     els.stopRecBtn.disabled = false;
-
+    // Mark active and start the 5s watchdog, store into recTimer for proper cleanup
+    isRecordingNow = true;
+    if (recTimer) { try { clearInterval(recTimer); } catch {} recTimer = null; }
     const startAt = Date.now();
     recTimer = setInterval(() => {
       const elapsed = Date.now() - startAt;
-      els.timer.textContent = formatTime(elapsed);
-      const pct = Math.max(0, 1 - (elapsed / 5000));
-      els.timeBar.style.width = `${(pct * 100).toFixed(1)}%`;
-      if (elapsed >= 5000) stopRecording();
+      if (elapsed >= 5000) { console.log('[rec] watchdog stop'); stopRecording(); }
     }, 150);
     setStatusBanner('Enregistrement (5s max)', 'info');
   } catch (e) {
@@ -1143,19 +1282,22 @@ async function startRecording() {
 }
 
 function stopRecording() {
+  // Stop media once; further calls are idempotent
+  const wasActive = isRecordingNow || (mediaRecorder && mediaRecorder.state !== 'inactive');
+  isRecordingNow = false;
+  try { if (recTimer) { clearInterval(recTimer); recTimer = null; } } catch {}
   if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-    mediaRecorder.stop();
-    mediaRecorder.stream.getTracks().forEach(t => t.stop());
+    try { mediaRecorder.stop(); } catch {}
+    try { mediaRecorder.stream.getTracks().forEach(t => t.stop()); } catch {}
   }
-  if (recTimer) { clearInterval(recTimer); recTimer = null; }
-  els.timeBar.style.width = '100%';
-  els.startRecBtn.disabled = true; // pas de 2e chance
-  els.stopRecBtn.disabled = true;
+  if (!wasActive) { return; }
   console.log('[rec] stopped');
   vibrate(50);
   showWave(false);
+  // Disable buttons post-send; will be re-enabled next round/secret
+  try { els.startRecBtn.disabled = true; els.stopRecBtn.disabled = true; } catch {}
   // Start 20s guess phase locally (recorder won't receive audio echo)
-  if (isRecorder) startGuessTimer();
+  if (isRecorder && !guessPhaseStarted) { guessPhaseStarted = true; startGuessTimer(); }
   // Recorder UI: show waiting for guessers and hide controls
   try { if (isRecorder) { els.recorderWait.classList.remove('hidden'); els.recorderControls.classList.add('hidden'); } } catch {}
 }

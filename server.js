@@ -10,9 +10,18 @@ const rooms = new Map(); // code -> room
 
 // Word list (server authoritative)
 const WORDS = [
+  // Base
   'chat','chien','vache','voiture','téléphone','porte','horloge','tambour','train','pluie',
   'aspirateur','hélicoptère','guitare','moto','oiseau','tonnerre','pizza','serpent','lion','bébé','marteau','râteau','sirène','robot','vent','réveil','cloche','singe','rire','machine à laver',
-  'dinosaure','photocopieuse','parapluie','volcan','cheval','chevalier','toilette','feu d’artifice','baleine','viking','zèbre','marteau-piqueur','popcorn','four','monstre','feu de camp','aspirine','friteuse','alien','canard qui parle'
+  'dinosaure','photocopieuse','parapluie','volcan','cheval','chevalier','toilette','feu d’artifice','baleine','viking','zèbre','marteau-piqueur','popcorn','four','monstre','feu de camp','aspirine','friteuse','alien','canard qui parle',
+  // Ajouts (sans doublons)
+  'poule','mouton','cochon','grenouille','canard','avion','camion','bateau','vélo','tracteur','ambulance','fusée',
+  'sifflet','klaxon','éternuer','tousser','bailler','eau','feu','éléphant','abeille','loup','hibou','souris',
+  'moto-cross','piano','batterie','trompette','violon','flûte','saxophone','café','soda','soupe','chips','glaçons',
+  'orage','océan','forêt','nager','courir','sauter','tomber','dormir','imprimante','ordinateur','micro-ondes','lave-linge','ventilateur','tondeuse','perceuse','mixeur','climatisation',
+  'fantôme','zombie','fermeture éclair','escalier','ascenseur','fontaine','balançoire','skateboard',
+  'dauphin','hyène','chauve-souris','bébé qui pleure','vieux téléphone','moteur qui cale',
+  'lightsaber','t-rex','pacman','mario','pikachu','chewbacca','r2-d2','gollum','yoda','minions'
 ];
 
 function genCode(len = 4) {
