@@ -646,8 +646,27 @@ function createMusicManager() {
       if (t >= 1) { stopFade(); }
     }, 30);
   }
+  function isSilenced() { return muted || recorderSilence; }
+  function enforcePolicy() {
+    try {
+      const keys = Object.keys(tracks);
+      for (const k of keys) {
+        const el = tracks[k];
+        if (!el) continue;
+        if (isSilenced()) {
+          try { el.muted = true; el.volume = 0.0; el.pause(); } catch {}
+        } else {
+          try { el.muted = false; } catch {}
+          // Only current track should attempt to play
+          if (k === current) playIfNeeded(el);
+        }
+      }
+    } catch {}
+  }
   function playIfNeeded(el) {
     try {
+      if (isSilenced()) { try { el.muted = true; el.pause(); } catch {}; return; }
+      el.muted = false;
       const p = el.play();
       if (p && typeof p.catch === 'function') p.catch(() => { try { els.enableSoundWrap?.classList.remove('hidden'); setupAutoplayUnlock(); } catch {} });
     } catch {}
@@ -667,11 +686,15 @@ function createMusicManager() {
     isMuted() { return muted; },
     setMuted(v, ms = 200) {
       muted = !!v; try { localStorage.setItem(LS_MUSIC_MUTED, muted ? '1' : '0'); } catch {}
-      if (!current) return; const el = get(current); const to = muted ? 0 : volumeTarget; fadeTo(el, to, ms);
+      enforcePolicy();
+      if (!current) return; const el = get(current);
+      const to = isSilenced() ? 0 : volumeTarget; fadeTo(el, to, ms);
     },
     setRecorderSilence(v, ms = 0) {
       recorderSilence = !!v;
-      if (!current) return; const el = get(current); const to = recorderSilence ? 0 : volumeTarget; fadeTo(el, to, ms);
+      enforcePolicy();
+      if (!current) return; const el = get(current);
+      const to = isSilenced() ? 0 : volumeTarget; fadeTo(el, to, ms);
     },
     current() { return current; },
     switchTo(kind) {
@@ -683,7 +706,12 @@ function createMusicManager() {
       const prev = current ? get(current) : null;
       volumeTarget = baseVol;
       if (prev) { fadeTo(prev, 0.0, 700); setTimeout(() => { try { prev.pause(); } catch {} }, 720); }
-      next.volume = 0.0; playIfNeeded(next); fadeTo(next, volumeTarget, 700); current = kind;
+      next.volume = 0.0; // start at 0
+      try { next.muted = isSilenced(); } catch {}
+      playIfNeeded(next);
+      fadeTo(next, volumeTarget, 700);
+      current = kind;
+      enforcePolicy();
     },
     fadeTo(vol, ms) {
       volumeTarget = vol; if (!current) return; const el = get(current); fadeTo(el, vol, ms);
@@ -694,6 +722,10 @@ function createMusicManager() {
   };
 }
 const music = createMusicManager();
+try { /* initial policy */ (function(){
+  // On boot, enforce current muted/silence state so iOS doesn't leak sound
+  try { music.setMuted(music.isMuted(), 0); } catch {}
+})(); } catch {}
 
 // Music control wiring (mute + slider)
 try {
