@@ -44,29 +44,39 @@
     
 
     <main class="main">
-      <section id="home" class="landing card center">
-        <div class="landing-inner">
-          <div class="brand">
-            <h1 class="logo">NOISE.IO</h1>
-            <p class="tag">Le jeu où tu bruites pour faire deviner 🎤</p>
+      <section id="home" class="home-screen">
+        <div class="home-inner">
+          <!-- Logo & ambiance -->
+          <div class="home-hero" aria-hidden="false">
+            <img class="home-logo" src="/assets/logo noise.png" alt="Noise.io" />
           </div>
-          <div class="hero" aria-hidden="true">
-            <div class="halo"></div>
-            <div class="mic">🎙️</div>
-            <div class="bubble b1">😊</div>
-            <div class="bubble b2">😄</div>
-            <div class="bubble b3">🤭</div>
+
+          <!-- Bloc Profil joueur -->
+          <div class="avatar-wrap">
+            <button id="homeAvatarBtn" class="home-avatar-btn" aria-label="Changer d’avatar">
+              <img id="homeAvatarImg" class="home-avatar-img" src="/assets/avatars/skin1.png" alt="Avatar" />
+            </button>
           </div>
-          <div class="actions">
-            <button id="playNowBtn" class="btn primary big">🎮 Jouer maintenant</button>
-            <button id="openJoinBtn" class="btn ghost big">🔑 Rejoindre un lobby</button>
-            <button id="openShopBtn" class="btn ghost big">🛍️ Boutique</button>
-            <div id="joinRowHome" class="row join-row hidden">
-              <input id="joinCodeHome" class="input" placeholder="Code de lobby" maxlength="6" />
-              <button id="joinGoBtn" class="btn">→</button>
-            </div>
+          <div class="nick-row">
+            <span class="nick-icon">👤</span>
+            <input id="nickname" class="nick-input" placeholder="Pseudo" maxlength="15" />
           </div>
+          <div id="nickHint" class="nick-hint hidden">Choisis un pseudo entre 3 et 15 caractères.</div>
+
+          <!-- Bloc Partie entre amis -->
+          <h3 class="friends-title">Partie entre amis</h3>
+
+          <!-- Rejoindre une partie -->
+          <div class="join-row">
+            <input id="joinCode" class="join-input" placeholder="Entrer un code de partie (ex : M4HU)" maxlength="6" inputmode="latin" autocapitalize="characters" />
+            <button id="joinSubmit" class="btn arrow" aria-label="Rejoindre">→</button>
+          </div>
+
+          <!-- Créer une partie -->
+          <button id="createGame" class="btn cta-yellow">CRÉER UNE PARTIE ENTRE AMIS</button>
         </div>
+        <!-- Recorder guesses floating area -->
+        <div id="guessesArea" class="guesses-area"></div>
       </section>
 
       <!-- Shop screen -->
@@ -96,43 +106,79 @@
         </div>
       </div>
 
-      <section id="auth" class="card center">
-        <h2>Rejoindre la fête</h2>
-        <input id="nickname" class="input" placeholder="Pseudo" maxlength="24" />
-        <div class="row">
-          <button id="createBtn" class="btn primary">Créer un lobby</button>
-        </div>
-        <div class="row">
-          <input id="joinCode" class="input" placeholder="Code lobby" maxlength="6" />
-          <button id="joinBtn" class="btn">Rejoindre</button>
-        </div>
-        <div class="hint">Astuce: ouvrez deux onglets pour tester</div>
-      </section>
+      
 
-      <section id="lobby" class="card narrow hidden lobby-screen">
-        <div class="code-bar">
-          <div class="code">Code : <b id="roomCode"></b></div>
-          <div class="code-actions">
-            <button id="copyCodeBtn" class="btn ghost small">📋 Copier</button>
-            <button id="leaveBtn" class="btn danger ghost small">Quitter</button>
+      <section id="lobby" class="hidden lobby-screen">
+        <div class="lobby-inner">
+          <!-- Header (floating on violet) -->
+          <div class="lobby-header">
+            <button id="leaveBtn" class="icon-btn" aria-label="Quitter">
+              <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M10 20v-6h4v6h5a1 1 0 0 0 1-1V9.667a1 1 0 0 0-.357-.76l-7-5.833a1 1 0 0 0-1.286 0l-7 5.833A1 1 0 0 0 4 9.667V19a1 1 0 0 0 1 1h5z" fill="currentColor"/></svg>
+            </button>
+            <div class="lobby-title">Le Salon (<span id="roomCode"></span>)</div>
+            <button id="copyCodeBtn" class="icon-btn" aria-label="Copier le code">
+              <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+                <path fill="currentColor" d="M7 17a5 5 0 0 1 0-10h4v2H7a3 3 0 0 0 0 6h4v2H7zm6-8V7h4a5 5 0 0 1 0 10h-4v-2h4a3 3 0 0 0 0-6h-4zm-5 3h8v2H8v-2z"/>
+              </svg>
+            </button>
+          </div>
+
+          <!-- Theme block (floating card) -->
+          <div class="theme-card">
+            <div class="theme-left">🌍</div>
+            <div class="theme-right">
+              <div class="theme-title">Thème Général</div>
+              <button id="changeThemeBtn" class="btn theme-btn">Changer de thème</button>
+            </div>
+          </div>
+
+          <!-- Tabs (floating bar) -->
+          <div class="tabs-wrap">
+            <div class="tabs-pill">
+              <div class="pill-indicator"></div>
+              <button id="tabPlayers" class="pill active">Joueurs</button>
+              <button id="tabMessages" class="pill">Messages</button>
+            </div>
+          </div>
+
+          <!-- Panels (floating content) -->
+          <div class="lobby-panels">
+            <div id="panelPlayers" class="lobby-panel active">
+              <ul id="playerList" class="players-list"></ul>
+            </div>
+            <div id="panelMessages" class="lobby-panel">
+              <div id="chatLogLobby" class="chat-log"></div>
+              <div id="emojiBarLobby" class="emoji-bar" aria-label="Emoji bar">
+                <button class="emoji">👋</button>
+                <button class="emoji">😆</button>
+                <button class="emoji">😂</button>
+                <button class="emoji">❤️</button>
+                <button class="emoji">🥳</button>
+                <button class="emoji">🔥</button>
+              </div>
+              <div class="input-row">
+                <input id="chatInputLobby" class="input" placeholder="Envoyer un message" enterkeyhint="send" />
+                <button id="sendMessageLobby" class="btn send-blue" aria-label="Envoyer">›</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Footer CTA (floating) -->
+          <div class="lobby-footer">
+            <button id="startGame" class="btn cta-yellow">LANCER LA PARTIE</button>
+            <div id="waitingHostMsg" class="hint muted hidden">⏳ En attente de l’hôte…</div>
           </div>
         </div>
-
-        <div class="card inner players-card">
-          <h3>Joueurs</h3>
-          <ul id="players" class="players modern"></ul>
-        </div>
-
-        <div id="lobbyActions" class="lobby-actions">
-          <button id="launchBtn" class="btn primary big hidden">🚀 Lancer la partie</button>
-          <div id="waitingHostMsg" class="hint muted hidden">⏳ En attente du lancement de la partie par l’hôte…</div>
-        </div>
-
-        <div class="hint center">Invite tes amis à rejoindre avec le code ou le lien 🔗</div>
       </section>
 
       <section id="round" class="hidden">
-        <div class="card narrow">
+        <div class="recorder-surface">
+          <div id="recBanner" class="rec-banner hidden">
+            <div class="rec-title">À ton tour, <span id="yourTurnTitle">—</span> !</div>
+            <div class="rec-sub">Fais deviner ton mot sans parler 🎭</div>
+          </div>
+        </div>
+        <div class="round-inner">
           <div id="recorderBubbles" class="recorder-bubbles" aria-hidden="true"></div>
           <div class="round-header">
             <div class="round-top">
@@ -154,18 +200,26 @@
           </div>
 
           <div id="recorderView" class="recorder-view hidden">
-            <div class="secret">
-              <div class="secret-title">Ton mot</div>
-              <div id="secretWordDisplay" class="secret-word">—</div>
+            <!-- Word card -->
+            <div id="wordCard" class="word-card">
+              <img id="wordImage" class="word-image" alt="Mot à bruiter" />
+              <div id="wordTitle" class="word-title">—</div>
+              <button id="newWord" class="btn theme-btn small">Changer de mot</button>
             </div>
+
+            <!-- Recording zone -->
+            <div id="recordZone" class="record-zone">
+              <button id="recordButton" class="record-btn" aria-label="Maintenir pour enregistrer">
+                <span class="mic-icon">🎤</span>
+              </button>
+              <div class="rec-hint">Enregistre jusqu’à 5 secondes maximum</div>
+              <div id="roundTimer" class="round-timer">00:30</div>
+            </div>
+
             <div id="recorderWait" class="recorder-wait hidden">En attente des devineurs…</div>
           </div>
 
-          <div id="recorderControls" class="recorder-controls hidden">
-            <button id="startRecBtn" class="btn primary">Démarrer enregistrement</button>
-            <button id="stopRecBtn" class="btn" disabled>Arrêter</button>
-            <button id="newWordInRoundBtn" class="btn">Nouveau mot</button>
-          </div>
+          
 
           <div id="waitingView" class="waiting-view hidden">
             <div id="waitingMsg" class="waiting-msg">🎤 Attends quelques secondes…</div>
@@ -179,7 +233,6 @@
             <div id="enableSoundWrap" class="enable-sound hidden">
               <button id="enableSoundBtn" class="btn">Activer le son</button>
             </div>
-            <div class="info">Le son se joue automatiquement 🎧</div>
             <div class="panels">
               <div id="panelChat" class="panel active card inner">
                 <h3>Chat</h3>
@@ -204,36 +257,46 @@
         </div>
       </section>
 
-      <section id="ended" class="card narrow hidden ended-screen">
-        <h2 id="endedTitle" class="ended-title">🎉 Fin de partie !</h2>
-        <div id="podium" class="podium">
-          <div class="place silver">
-            <div class="medal">🥈</div>
-            <div class="name" id="podiumSilverName">—</div>
-            <div class="score" id="podiumSilverScore">0</div>
+      <section id="ended" class="ended-screen hidden">
+        <div class="ended-inner">
+          <div id="endConfetti" class="confetti-layer" aria-hidden="true"></div>
+          <h2 id="endedTitle" class="ended-title">Bravo à tous pour cette cacophonie légendaire ! 🎉</h2>
+
+          <div class="podium-card">
+            <div id="podium" class="podium">
+              <div class="slot silver bounce-in">
+                <div class="medal">🥈</div>
+                <div class="name" id="podiumSilverName">—</div>
+                <div class="score" id="podiumSilverScore">0 pts</div>
+              </div>
+              <div class="slot gold bounce-in">
+                <div class="halo"></div>
+                <div class="medal">🥇</div>
+                <div class="name" id="podiumGoldName">—</div>
+                <div class="score" id="podiumGoldScore">0 pts</div>
+              </div>
+              <div class="slot bronze bounce-in">
+                <div class="medal">🥉</div>
+                <div class="name" id="podiumBronzeName">—</div>
+                <div class="score" id="podiumBronzeScore">0 pts</div>
+              </div>
+            </div>
+
+            <div class="others-list">
+              <ul id="leaderboardFull" class="leaderboard"></ul>
+            </div>
           </div>
-          <div class="place gold">
-            <div class="medal">🥇</div>
-            <div class="name" id="podiumGoldName">—</div>
-            <div class="score" id="podiumGoldScore">0</div>
+
+          <div class="replays-section">
+            <h3 class="replays-title">Les bruits cultes de la partie 🔊</h3>
+            <div id="finalReplays" class="replays-list hscroll"></div>
           </div>
-          <div class="place bronze">
-            <div class="medal">🥉</div>
-            <div class="name" id="podiumBronzeName">—</div>
-            <div class="score" id="podiumBronzeScore">0</div>
+
+          <div class="end-actions">
+            <button id="restartBtn" class="btn end-cta replay">🎮 Rejouer une partie</button>
+            <button id="backHomeBtn" class="btn end-cta home">🏠 Revenir à l’accueil</button>
           </div>
         </div>
-        <div class="leaderboard-wrap">
-          <ul id="leaderboardFull" class="leaderboard"></ul>
-        </div>
-        <div id="restartWrap" class="row restart-wrap" style="margin-top:16px;">
-          <button id="restartBtn" class="btn primary">Rejouer une partie</button>
-        </div>
-        <div id="backHomeWrap" class="row" style="margin-top:8px;">
-          <button id="backHomeBtn" class="btn ghost">← Accueil</button>
-        </div>
-        <h3>Replays</h3>
-        <div id="finalReplays" class="replays-list"></div>
       </section>
     </main>
   </div>
@@ -242,6 +305,20 @@
   <div id="bubblesLayer" class="bubbles-layer hidden" aria-hidden="true"></div>
   <div id="winnerToast" class="winner-toast hidden" aria-live="polite" role="status"></div>
 
-  <script src="/client.js" type="module"></script>
+  <!-- Inter-round transition overlay (5s) -->
+  <div id="transitionOverlay" class="transition-overlay hidden" aria-live="polite" role="status">
+    <div class="overlay-inner">
+      <div id="trConfetti" class="confetti-layer" aria-hidden="true"></div>
+      <h2 id="trTitle" class="tr-title pop-in">—</h2>
+      <div class="card word-reveal">
+        <img id="trWordImage" class="word-image" alt="Mot révélé" />
+        <div id="trWordText" class="word-title">—</div>
+      </div>
+      <ul id="trResultsList" class="results-list"></ul>
+      <div id="trCountdown" class="card countdown">Prochaine manche dans <span id="trCountdownValue">5</span> secondes</div>
+    </div>
+  </div>
+
+  <script src="/client.js?v=imgwords-v3" type="module"></script>
 </body>
 </html>

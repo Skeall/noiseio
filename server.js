@@ -3,6 +3,7 @@ import http from 'http';
 import { WebSocketServer } from 'ws';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import fs from 'fs';
 
 // Debug logs are added throughout for easier troubleshooting
 // Simple in-memory game state (resets on server restart)
@@ -89,7 +90,8 @@ function makeRoom(code) {
     history: [], // [{ recorderId, winnerId, secretNorm, audioBase64, audioMime }]
     turn: [], // array of player ids in order
     turnIndex: 0,
-    party: null // { started, players: string[], played: Record<string,number>, totalRounds, roundNumber }
+    party: null, // { started, players: string[], played: Record<string,number>, totalRounds, roundNumber }
+    nextRoundTo: null // scheduled timeout between rounds
   };
 }
 
@@ -137,15 +139,18 @@ function pickRandomWord() { return WORDS[Math.floor(Math.random() * WORDS.length
 function clearTimers(room) {
   try { if (room.current?.recordTo) { clearTimeout(room.current.recordTo); room.current.recordTo = null; } } catch {}
   try { if (room.current?.guessTo) { clearTimeout(room.current.guessTo); room.current.guessTo = null; } } catch {}
+  try { if (room.nextRoundTo) { clearTimeout(room.nextRoundTo); room.nextRoundTo = null; } } catch {}
 }
 
 function scheduleNextRound(room) {
   // Start next round automatically after a short pause
   if (room.state !== 'lobby') return;
   if (!room.turn?.length) return;
-  const delay = 1500;
+  const delay = 5000; // allow 5s transition screen
+  try { if (room.nextRoundTo) { clearTimeout(room.nextRoundTo); room.nextRoundTo = null; } } catch {}
   console.log('[round] scheduling next in', delay, 'ms for room', room.code);
-  setTimeout(() => {
+  room.nextRoundTo = setTimeout(() => {
+    room.nextRoundTo = null;
     try { startServerRound(room); } catch (e) { console.error('[round] auto start error', e); }
   }, delay);
 }
@@ -203,6 +208,8 @@ function finishRound(room, { winnerId = null, reason = 'correct' }) {
     winnerId: winnerId,
     secretNorm: cur.secretNorm,
     secretRaw: cur.secretRaw,
+    image: cur.image || '',
+    foundOrder: Array.isArray(cur.foundOrder) ? cur.foundOrder.slice() : [],
     audioBase64: cur.audioBase64,
     audioMime: cur.audioMime
   });
@@ -229,7 +236,24 @@ function finishRound(room, { winnerId = null, reason = 'correct' }) {
     return roundsPlayed >= totalRounds;
   })();
   const nextId = partyDone ? null : pickNextRecorderId(room);
-  const payloadEnded = { reason: partyDone ? 'party-complete' : (reason || (winner ? 'correct' : 'timeout')), nextRecorderId: nextId, prevRecorderId: room.turn[prev], history: roomSnapshot(room).history };
+  // Build round result summary for transition screen
+  const winnersArr = Array.isArray(room.history[room.history.length - 1]?.foundOrder)
+    ? room.history[room.history.length - 1].foundOrder.filter(w => w.id !== (room.history[room.history.length - 1]?.recorderId))
+    : [];
+  console.log('[round] end summary', {
+    reason,
+    winnersCount: winnersArr.length,
+    secret: room.history[room.history.length - 1]?.secretRaw,
+    image: room.history[room.history.length - 1]?.image
+  });
+  const roundResult = {
+    secret: room.history[room.history.length - 1]?.secretRaw || null,
+    image: room.history[room.history.length - 1]?.image || '',
+    recorderId: room.history[room.history.length - 1]?.recorderId || null,
+    winners: winnersArr.map((w, idx) => ({ id: w.id, name: w.name, points: idx === 0 ? 2 : 1 }))
+  };
+  const nextInMs = partyDone ? 0 : 5000;
+  const payloadEnded = { reason: partyDone ? 'party-complete' : (reason || (winner ? 'correct' : 'timeout')), nextRecorderId: nextId, prevRecorderId: room.turn[prev], history: roomSnapshot(room).history, roundResult, nextInMs };
   broadcast(room, { type: 'roundEnded', payload: payloadEnded });
   broadcast(room, { type: 'scores', payload: { players: [...room.players.values()].map(p => ({ id: p.id, name: p.name, score: p.score })) } });
   // schedule next or end party
@@ -277,14 +301,17 @@ function startServerRound(room, overrideRecorderId = null) {
   }
   const recorder = room.players.get(recorderId);
   if (!recorder) return;
-  const word = pickRandomWord();
+  // Pick secret from imagemot folder (fallback to legacy words if empty)
+  const secret = pickRandomSecret();
+  const word = secret.word;
   room.state = 'inRound';
-  room.current = { recorderId, secretNorm: normalizeText(word), secretRaw: word, audioBase64: null, audioMime: null, phase: 'recording', recordTo: null, guessTo: null };
+  // Track image and winners order for transition screen
+  room.current = { recorderId, secretNorm: normalizeText(word), secretRaw: word, image: secret.image || '', audioBase64: null, audioMime: null, phase: 'recording', recordTo: null, guessTo: null, found: new Set(), foundOrder: [] };
   try { if (room.party?.started) room.party.roundNumber += 1; } catch {}
-  console.log('[round] start (server) room', room.code, 'recorder', recorder.name, 'word(picked)');
+  console.log('[round] start (server) room', room.code, 'recorder', recorder.name, 'word(picked from images)=', !!secret.image);
   broadcast(room, { type: 'roundStarted', payload: { byId: recorderId, byName: recorder.name, round: room.party?.roundNumber || 1, total: room.party?.totalRounds || room.turn.length } });
   // send secret privately to recorder only
-  try { send(recorder.ws, { type: 'secret', payload: { word: word } }); } catch (e) { console.error('[secret] send error', e); }
+  try { send(recorder.ws, { type: 'secret', payload: { word: word, image: secret.image } }); } catch (e) { console.error('[secret] send error', e); }
   // 30s recording phase timeout (if no audio arrives)
   room.current.recordTo = setTimeout(() => {
     if (!room.current) return;
@@ -299,6 +326,46 @@ const app = express();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 app.use(express.static('public'));
+
+// Image-based words directory (auto-generated words from filenames)
+const IMAGES_DIR = path.join(__dirname, 'public', 'assets', 'imagemot');
+const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
+
+function listImagemot() {
+  try {
+    const entries = fs.readdirSync(IMAGES_DIR, { withFileTypes: true });
+    const files = entries
+      .filter((d) => d.isFile())
+      .map((d) => d.name)
+      .filter((n) => IMAGE_EXTS.has(path.extname(n).toLowerCase()));
+    const mapped = files.map((name) => {
+      const base = name.replace(/\.[^.]+$/, '');
+      const word = base; // display uses filename (sans extension)
+      const image = '/assets/imagemot/' + encodeURI(name);
+      return { word, image, file: name };
+    });
+    // Debug log size for visibility
+    console.log('[images] found', mapped.length, 'imagemot files');
+    return mapped;
+  } catch (e) {
+    console.error('[images] list error', e);
+    return [];
+  }
+}
+
+function pickRandomImageWord() {
+  const arr = listImagemot();
+  if (!arr.length) return null;
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function pickRandomSecret() {
+  // Prefer image-based word; fallback to legacy WORDS list for safety
+  const img = pickRandomImageWord();
+  if (img) return { word: img.word, image: img.image };
+  const legacy = pickRandomWord();
+  return { word: legacy, image: '' };
+}
 
 // Simple version endpoint to verify server build
 const SERVER_VERSION = 'multi-guessers-v2';
@@ -375,26 +442,32 @@ wss.on('connection', (ws) => {
       // Recorder can ask for a new word during recording (before audio sent)
       const cur = room.current;
       if (!cur || cur.recorderId !== client.id || cur.phase !== 'recording') return;
-      const newW = pickRandomWord();
-      cur.secretNorm = normalizeText(newW);
-      cur.secretRaw = newW;
-      console.log('[round] new word requested by recorder in room', room.code);
+      const secret = pickRandomSecret();
+      cur.secretNorm = normalizeText(secret.word);
+      cur.secretRaw = secret.word;
+      cur.image = secret.image || '';
+      console.log('[round] new word requested by recorder in room', room.code, 'imageBased=', !!secret.image);
       // notify recorder only
-      try { send(ws, { type: 'secret', payload: { word: newW } }); } catch (e) { console.error('[secret] send error', e); }
+      try { send(ws, { type: 'secret', payload: { word: secret.word, image: secret.image } }); } catch (e) { console.error('[secret] send error', e); }
       return;
     }
 
     if (type === 'audio') {
-      if (room.state !== 'inRound' || !room.current || room.current.recorderId !== client.id) return;
-      const { data, mime } = payload || {};
-      if (!data || typeof data !== 'string') return;
-      room.current.audioBase64 = data; // keep last audio for replay
-      room.current.audioMime = mime || 'audio/webm';
-      console.log('[audio] received for room', room.code, 'size(base64)=', data.length);
-      broadcast(room, { type: 'audio', payload: { fromId: client.id, mime: room.current.audioMime, base64: data } }, client.id);
-      // Transition to guessing phase server-side
-      clearTimers(room);
+      // Recorder uploads recorded audio; start guessing phase and broadcast audio to all
+      const cur = room.current;
+      if (!cur || room.state !== 'inRound') return;
+      if (cur.recorderId !== client.id) { console.warn('[audio] ignored: not recorder'); return; }
+      if (cur.phase !== 'recording') { console.warn('[audio] ignored: wrong phase', cur.phase); return; }
+      const base64 = (payload?.data || '').toString();
+      const mime = (payload?.mime || '').toString();
+      if (!base64) { console.warn('[audio] empty payload'); return; }
+      try { cur.audioBase64 = base64; cur.audioMime = mime || 'audio/webm'; } catch {}
+      try { if (cur.recordTo) { clearTimeout(cur.recordTo); cur.recordTo = null; } } catch {}
+      console.log('[audio] received from recorder in room', room.code, 'bytes=', base64.length, 'mime=', mime);
+      // Move to guessing phase and start 20s timer
       startGuessPhase(room);
+      // Broadcast audio to all players
+      broadcast(room, { type: 'audio', payload: { base64, mime: cur.audioMime } });
       return;
     }
 
@@ -414,8 +487,15 @@ wss.on('connection', (ws) => {
           const isNewWinner = !cur.found.has(client.id);
           if (isNewWinner) {
             cur.found.add(client.id);
-            // Scoring: +1 for winner
-            try { const w = room.players.get(client.id); if (w) w.score += 1; } catch {}
+            try { if (!Array.isArray(cur.foundOrder)) cur.foundOrder = []; cur.foundOrder.push({ id: client.id, name: player?.name || '', at: Date.now() }); } catch {}
+            // Scoring: +2 for first guesser, +1 for subsequent
+            try {
+              const w = room.players.get(client.id);
+              if (w) {
+                const isFirst = (cur.found?.size || 0) === 1;
+                w.score += isFirst ? 2 : 1;
+              }
+            } catch {}
             // Recorder gets +1 on first correct only
             if (!cur.recorderAwarded) {
               try { const r = room.players.get(cur.recorderId); if (r) r.score += 1; } catch {}

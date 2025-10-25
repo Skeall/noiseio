@@ -2,6 +2,28 @@ function showWave(on) {
   try { els.wave.classList.toggle('hidden', !on); } catch {}
 }
 
+// Robust send that waits for WS to be open before sending
+function sendWhenReady(type, payload) {
+  if (ws?.readyState === WebSocket.OPEN) { send(type, payload); return; }
+  if (!ws || ws.readyState === WebSocket.CLOSED) { connectWS(); }
+  try {
+    const onOpen = () => { try { ws.removeEventListener('open', onOpen); } catch {}; send(type, payload); };
+    ws.addEventListener('open', onOpen, { once: true });
+  } catch { setTimeout(() => send(type, payload), 120); }
+}
+
+let lobbyMsgCount = 0; // independent counter for lobby chat to avoid TDZ on msgCount
+function logLobbyMsg(text) {
+  if (!els.chatLogLobby) return;
+  const div = document.createElement('div');
+  div.className = 'msg';
+  div.textContent = text;
+  els.chatLogLobby.appendChild(div);
+  if ((lobbyMsgCount++ % 2) === 1) div.classList.add('alt');
+  try { els.chatLogLobby.scrollTo({ top: els.chatLogLobby.scrollHeight, behavior: 'smooth' }); }
+  catch { els.chatLogLobby.scrollTop = els.chatLogLobby.scrollHeight; }
+}
+
 // Subtle tick (last 5s)
 function playTick() { /* disabled per UX */ }
 
@@ -55,6 +77,8 @@ function updateChronoUI(elapsed, total) {
   try {
     els.timerBadge.textContent = formatTime(remain);
     if (els.guesserTimerBadge) els.guesserTimerBadge.textContent = formatTime(remain);
+    if (els.roundTimer) els.roundTimer.textContent = formatTime(remain);
+    if (els.guessRoundTimer) els.guessRoundTimer.textContent = formatTime(remain);
   } catch {}
   const pct = Math.max(0, 1 - (elapsed / total));
   els.timeBar.style.width = `${(pct * 100).toFixed(1)}%`;
@@ -72,7 +96,8 @@ function startChrono(totalMs) {
   chronoTotalMs = totalMs; chronoStartAt = Date.now(); chronoLastSec = null; tickingActive = true;
   updateChronoUI(0, chronoTotalMs);
   try {
-    els.timerBadge.classList.remove('hidden','warn','danger');
+    if (!isRecorder) { els.timerBadge.classList.remove('hidden','warn','danger'); }
+    else { els.timerBadge.classList.add('hidden'); }
     if (els.guesserTimer) els.guesserTimer.classList.remove('hidden');
     if (els.guesserTimerBadge) els.guesserTimerBadge.classList.remove('warn','danger');
   } catch {}
@@ -131,10 +156,28 @@ function stopAudioLoop(immediate = false) {
     try { loopAudioEl.pause(); } catch {}
   }
   if (immediate) showWave(false);
+  try { music.restore(1000); } catch {}
+}
+
+// Attempt to unlock autoplay on first user gesture and retry playback
+function setupAutoplayUnlock() {
+  const tryResume = () => {
+    try { if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume(); } catch {}
+    document.removeEventListener('pointerdown', tryResume);
+    document.removeEventListener('touchstart', tryResume);
+    document.removeEventListener('click', tryResume);
+    document.removeEventListener('keydown', tryResume);
+    console.log('[audio] autoplay unlocked by user gesture → retry');
+    try { startAudioLoop(); } catch {}
+  };
+  document.addEventListener('pointerdown', tryResume, { once: true });
+  document.addEventListener('touchstart', tryResume, { once: true });
+  document.addEventListener('click', tryResume, { once: true });
+  document.addEventListener('keydown', tryResume, { once: true });
 }
 
 function startAudioLoop() {
-  if (!loopAudioSrc || !allowSound) return;
+  if (!loopAudioSrc) return;
   loopStopRequested = false;
   const playOnce = () => {
     if (loopStopRequested) { showWave(false); return; }
@@ -143,18 +186,28 @@ function startAudioLoop() {
     a.preload = 'auto';
     a.crossOrigin = 'anonymous';
     a.playsInline = true;
+    try { a.muted = false; a.volume = 1.0; } catch {}
     loopAudioEl = a;
     showWave(true);
     a.onended = () => {
       if (loopStopRequested) { showWave(false); return; }
+      try { music.restore(1000); } catch {}
       setTimeout(() => { playOnce(); }, 2000);
     };
+    try { music.duckTo(0.1, 400); } catch {}
     const p = a.play();
     if (p && typeof p.catch === 'function') p.catch(() => {
-      // Autoplay blocked → show enable sound prompt
-      try { els.enableSoundWrap.classList.remove('hidden'); } catch {}
+      // Autoplay might be blocked → set up a one-time unlock on user gesture and show enable prompt
+      console.log('[audio] autoplay blocked, installing unlock handler');
+      setupAutoplayUnlock();
+      try { els.enableSoundWrap?.classList.remove('hidden'); } catch {}
       showWave(false);
+  try { music.restore(800); } catch {}
     });
+    else {
+      // Playback started → hide any enable prompt
+      try { els.enableSoundWrap?.classList.add('hidden'); } catch {}
+    }
   };
   playOnce();
 }
@@ -173,11 +226,15 @@ const els = {
   ended: document.getElementById('ended'),
   shop: document.getElementById('shop'),
   nickname: document.getElementById('nickname'),
+  nickHint: document.getElementById('nickHint'),
   createBtn: document.getElementById('createBtn'),
   joinCode: document.getElementById('joinCode'),
   joinBtn: document.getElementById('joinBtn'),
+  createGame: document.getElementById('createGame'),
+  joinSubmit: document.getElementById('joinSubmit'),
   roomCode: document.getElementById('roomCode'),
   players: document.getElementById('players'),
+  playerList: document.getElementById('playerList'),
   secretInput: document.getElementById('secretInput'),
   startRoundBtn: document.getElementById('startRoundBtn'),
   endGameBtn: document.getElementById('endGameBtn'),
@@ -194,6 +251,16 @@ const els = {
   recorderView: document.getElementById('recorderView'),
   secretWordDisplay: document.getElementById('secretWordDisplay'),
   recorderWait: document.getElementById('recorderWait'),
+  // SoundMaker UX refresh
+  recBanner: document.getElementById('recBanner'),
+  yourTurnTitle: document.getElementById('yourTurnTitle'),
+  wordCard: document.getElementById('wordCard'),
+  wordImage: document.getElementById('wordImage'),
+  wordTitle: document.getElementById('wordTitle'),
+  newWord: document.getElementById('newWord'),
+  recordButton: document.getElementById('recordButton'),
+  roundTimer: document.getElementById('roundTimer'),
+  guessesArea: document.getElementById('guessesArea'),
   waitingView: document.getElementById('waitingView'),
   waitingMsg: document.getElementById('waitingMsg'),
   guessView: document.getElementById('guessView'),
@@ -212,6 +279,17 @@ const els = {
   tabScores: document.getElementById('tabScores'),
   panelChat: document.getElementById('panelChat'),
   panelScores: document.getElementById('panelScores'),
+  // Lobby tabs
+  tabPlayers: document.getElementById('tabPlayers'),
+  tabMessages: document.getElementById('tabMessages'),
+  panelPlayers: document.getElementById('panelPlayers'),
+  panelMessages: document.getElementById('panelMessages'),
+  tabsPill: document.querySelector('#lobby .tabs-pill'),
+  // Lobby chat
+  chatLogLobby: document.getElementById('chatLogLobby'),
+  chatInputLobby: document.getElementById('chatInputLobby'),
+  sendMessageLobby: document.getElementById('sendMessageLobby'),
+  emojiBarLobby: document.getElementById('emojiBarLobby'),
   restartBtn: document.getElementById('restartBtn'),
   enableSoundWrap: document.getElementById('enableSoundWrap'),
   enableSoundBtn: document.getElementById('enableSoundBtn'),
@@ -223,6 +301,9 @@ const els = {
   podiumSilverScore: document.getElementById('podiumSilverScore'),
   podiumBronzeName: document.getElementById('podiumBronzeName'),
   podiumBronzeScore: document.getElementById('podiumBronzeScore'),
+  // Home avatar (UX refresh)
+  homeAvatarBtn: document.getElementById('homeAvatarBtn'),
+  homeAvatarImg: document.getElementById('homeAvatarImg'),
   backHomeBtn: document.getElementById('backHomeBtn'),
   openJoinBtn: document.getElementById('openJoinBtn'),
   joinRowHome: document.getElementById('joinRowHome'),
@@ -231,6 +312,7 @@ const els = {
   copyCodeBtn: document.getElementById('copyCodeBtn'),
   leaveBtn: document.getElementById('leaveBtn'),
   launchBtn: document.getElementById('launchBtn'),
+  startGame: document.getElementById('startGame'),
   waitingHostMsg: document.getElementById('waitingHostMsg'),
   echoBalance: document.getElementById('echoBalance'),
   echoBalanceHome: document.getElementById('echoBalanceHome'),
@@ -244,6 +326,14 @@ const els = {
   recorderBubbles: document.getElementById('recorderBubbles'),
   bubblesLayer: document.getElementById('bubblesLayer'),
   winnerToast: document.getElementById('winnerToast'),
+  // Transition overlay
+  transitionOverlay: document.getElementById('transitionOverlay'),
+  trTitle: document.getElementById('trTitle'),
+  trWordImage: document.getElementById('trWordImage'),
+  trWordText: document.getElementById('trWordText'),
+  trResultsList: document.getElementById('trResultsList'),
+  trCountdown: document.getElementById('trCountdown'),
+  trCountdownValue: document.getElementById('trCountdownValue'),
   // Shop UI
   openShopBtn: document.getElementById('openShopBtn'),
   shopBackBtn: document.getElementById('shopBackBtn'),
@@ -258,8 +348,11 @@ let myId = null;
 let roomCode = null;
 let snapshot = null;
 let isRecorder = false; // whether I am recorder for this round
+let recorderIdExpected = null; // recorder id announced at round start
+let receivedSecretThisRound = false; // guard against stale recorder state
 let mediaRecorder = null;
 let chunks = [];
+let trInterval = null; // transition countdown interval
 
 // Avatars assets (from /public/assets/avatars)
 const AVATAR_FILES = [
@@ -278,6 +371,7 @@ function setAvatar(file) {
   try { localStorage.setItem('noiseio_avatar', file); myAvatar = file; } catch {}
   try { updateRoomUI(snapshot || { players: [] }); } catch {}
   try { if (els.avatarChipImg) els.avatarChipImg.src = avatarUrl(file); } catch {}
+  try { if (els.homeAvatarImg) els.homeAvatarImg.src = avatarUrl(file); } catch {}
 }
 
 function ensureAvatar() {
@@ -289,9 +383,137 @@ function ensureAvatar() {
     console.log('[avatar] assigned random', pick);
   }
   try { if (els.avatarChipImg && myAvatar) els.avatarChipImg.src = avatarUrl(myAvatar); } catch {}
+  try { if (els.homeAvatarImg && myAvatar) els.homeAvatarImg.src = avatarUrl(myAvatar); } catch {}
 }
 
 function avatarUrl(file) { return `/assets/avatars/${encodeURI(file)}`; }
+
+// End-screen confetti utilities
+function startEndConfettiLoop() {
+  try { if (endConfettiTo) { clearInterval(endConfettiTo); endConfettiTo = null; } } catch {}
+  endConfettiTo = setInterval(() => {
+    try { confetti({ particleCount: 60, spread: 60, ticks: 220, origin: { y: 0.15 } }); } catch {}
+  }, 1800);
+}
+function stopEndConfettiLoop() {
+  try { if (endConfettiTo) { clearInterval(endConfettiTo); endConfettiTo = null; } } catch {}
+}
+
+// Transition overlay utilities
+function hideTransitionOverlay() {
+  try { if (trInterval) { clearInterval(trInterval); trInterval = null; } } catch {}
+  try { if (els.transitionOverlay) els.transitionOverlay.classList.add('hidden'); } catch {}
+  try { if (els.trResultsList) els.trResultsList.innerHTML = ''; } catch {}
+  try { document.body.classList.remove('overlay-bg'); } catch {}
+  try { if (revealAudioEl) { revealAudioEl.pause(); revealAudioEl = null; } } catch {}
+  try { music.restore(800); } catch {}
+}
+
+function showTransitionOverlay(roundResult, seconds = 5) {
+  if (!els.transitionOverlay) return;
+  try { document.body.classList.add('overlay-bg'); } catch {}
+  // Populate title and word card
+  let word = (roundResult?.secret || '').toString();
+  if (!word) {
+    try { const last = (snapshot?.history || [])[snapshot.history.length - 1]; if (last?.word || last?.secretRaw) word = (last.word || last.secretRaw || '').toString(); } catch {}
+  }
+  const wordUpper = word.toUpperCase();
+  try { if (els.trTitle) els.trTitle.textContent = wordUpper; } catch {}
+  try { if (els.trWordText) els.trWordText.textContent = wordUpper; } catch {}
+  try {
+    let src = (roundResult?.image || '').toString();
+    if (!src && word) {
+      const slug = word.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().replace(/[^a-z0-9\s-]/g, '').trim().replace(/\s+/g, '-');
+      src = `/assets/imagemot/${slug}.jpg`;
+    }
+    if (els.trWordImage) {
+      const img = els.trWordImage;
+      img.onerror = () => {
+        try {
+          const slug = word.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().replace(/[^a-z0-9\s-]/g, '').trim().replace(/\s+/g, '-');
+          const fallback = `/assets/imagemot/${slug}.jpg`;
+          if (img.src !== location.origin + fallback) { img.onerror = null; img.src = fallback; }
+        } catch {}
+      };
+      img.src = src;
+    }
+  } catch {}
+  // Play reveal sound mapped to the word with robust fallbacks (assets/sound/*.mp3)
+  try {
+    const wordRaw = (word || '').toString();
+    const slug = wordRaw.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().replace(/[^a-z0-9\s-]/g, '').trim().replace(/\s+/g, '-');
+    // Try to infer from image path first (most reliable mapping)
+    let imgBase = '';
+    try {
+      const p = (roundResult?.image || src || '').toString();
+      if (p) { const f = p.substring(p.lastIndexOf('/')+1, p.lastIndexOf('.')); if (f) imgBase = decodeURIComponent(f.toLowerCase()); }
+    } catch {}
+    const rawLower = wordRaw.toLowerCase();
+    // Variants: with hyphens, with spaces, without spaces
+    const hyphenRaw = rawLower.replace(/\s+/g, '-');
+    const noSpaceRaw = rawLower.replace(/\s+/g, '');
+    const noSpaceSlug = slug.replace(/-/g, '');
+    const candidates = [imgBase, slug, hyphenRaw, rawLower, noSpaceRaw, noSpaceSlug]
+      .filter(Boolean)
+      .map(base => `/assets/sound/${base}.mp3`);
+    if (revealAudioEl) { try { revealAudioEl.pause(); } catch {} }
+    const a = new Audio();
+    a.preload = 'auto'; a.playsInline = true; a.crossOrigin = 'anonymous';
+    try { a.muted = false; a.volume = 1.0; } catch {}
+    let idx = 0;
+    const tryNext = () => {
+      if (idx >= candidates.length) return;
+      a.onerror = () => { idx += 1; tryNext(); };
+      a.src = candidates[idx];
+      // Duck music for reveal priority
+      try { music.duckTo(0.1, 400); } catch {}
+      const p = a.play();
+      try { a.onended = () => { try { music.restore(800); } catch {}; }; } catch {}
+      if (p && typeof p.catch === 'function') p.catch(() => {
+        try { els.enableSoundWrap?.classList.remove('hidden'); } catch {}
+        try { setupAutoplayUnlock(); } catch {}
+      });
+    };
+    revealAudioEl = a;
+    tryNext();
+  } catch {}
+  // Build results list
+  try {
+    const list = els.trResultsList; if (list) list.innerHTML = '';
+    const playersArr = (snapshot?.players || []).slice();
+    const winners = Array.isArray(roundResult?.winners) ? roundResult.winners : [];
+    const winIds = new Set(winners.map(w => w.id));
+    const recorderId = roundResult?.recorderId || (snapshot?.current?.recorderId);
+    const losers = playersArr.filter(p => p.id !== recorderId && !winIds.has(p.id));
+    const rows = [
+      ...winners.map((w, idx) => ({ id: w.id, name: w.name || nameOf(w.id), ok: true, points: w.points || (idx === 0 ? 2 : 1) })),
+      ...losers.map(p => ({ id: p.id, name: p.name, ok: false, points: 0 }))
+    ];
+    rows.forEach((r, i) => {
+      const li = document.createElement('li');
+      li.className = 'result-row pop-in';
+      li.style.animationDelay = `${i * 0.2}s`;
+      const av = document.createElement('div'); av.className = 'avatar'; av.style.background = colorForId(r.id); av.textContent = (r.name || '?').slice(0,1).toUpperCase();
+      const nick = document.createElement('div'); nick.className = 'name'; nick.textContent = '@' + (r.name || '—');
+      const right = document.createElement('div'); right.className = 'points'; right.textContent = (r.ok ? '✅ ' : '❌ ') + (r.points > 0 ? `+${r.points} pt${r.points>1?'s':''}` : '0 pt');
+      li.appendChild(av); li.appendChild(nick); li.appendChild(right);
+      list?.appendChild(li);
+    });
+  } catch {}
+  // Countdown 5 -> 0
+  try { els.trCountdownValue.textContent = String(Math.max(0, Math.round(seconds))); } catch {}
+  try { els.transitionOverlay.classList.remove('hidden'); } catch {}
+  try { confetti({ spread: 70, particleCount: 120, origin: { y: 0.2 } }); } catch {}
+  console.log('[transition] show overlay', roundResult);
+  // Audio hook (to be added later)
+  console.log('[transition] audio hook for word');
+  let remain = Math.max(0, Math.round(seconds));
+  trInterval = setInterval(() => {
+    remain -= 1;
+    try { els.trCountdownValue.textContent = String(Math.max(0, remain)); } catch {}
+    if (remain <= 0) { try { clearInterval(trInterval); trInterval = null; } catch {}; }
+  }, 1000);
+}
 
 function renderAvatarGrid() {
   if (!els.avatarGrid) return;
@@ -350,10 +572,12 @@ let allowSound = false;
 let loopAudioSrc = null;
 let loopAudioEl = null;
 let loopStopRequested = false;
+let revealAudioEl = null;
 let currentReplayAudio = null;
 let lastPlayersCount = 0;
 let myAvatar = null;
 let echoBalance = 0;
+let endConfettiTo = null;
 // Immersive chrono state
 let chronoTimer = null;
 let chronoStartAt = 0;
@@ -361,6 +585,68 @@ let chronoTotalMs = 0;
 let chronoLastSec = null;
 let tickingActive = false;
 const AUDIO_VOLUME_TICK = 0.2;
+
+// Background Music Manager (continuous ambience)
+function createMusicManager() {
+  const sources = {
+    lobby: '/assets/music/lobby1.mp3',
+    game: '/assets/music/game1.mp3',
+  };
+  const tracks = { lobby: null, game: null };
+  let current = null; // 'lobby' | 'game' | null
+  let fadeId = null;
+  let volumeTarget = 0.4; // base target for current context
+
+  function ensure(el) {
+    if (!el) return;
+    el.loop = true; el.preload = 'auto'; el.playsInline = true; el.crossOrigin = 'anonymous';
+    try { el.muted = false; } catch {}
+  }
+  function get(kind) {
+    if (!tracks[kind]) { tracks[kind] = new Audio(sources[kind]); ensure(tracks[kind]); }
+    return tracks[kind];
+  }
+  function stopFade() { if (fadeId) { clearInterval(fadeId); fadeId = null; } }
+  function fadeTo(el, to, ms = 500) {
+    stopFade();
+    const from = el.volume;
+    const start = Date.now();
+    if (ms <= 0) { el.volume = to; return; }
+    fadeId = setInterval(() => {
+      const t = Math.min(1, (Date.now() - start) / ms);
+      const v = from + (to - from) * t; el.volume = Math.max(0, Math.min(1, v));
+      if (t >= 1) { stopFade(); }
+    }, 30);
+  }
+  function playIfNeeded(el) {
+    try {
+      const p = el.play();
+      if (p && typeof p.catch === 'function') p.catch(() => { try { els.enableSoundWrap?.classList.remove('hidden'); setupAutoplayUnlock(); } catch {} });
+    } catch {}
+  }
+
+  return {
+    base() { return 0.4; },
+    current() { return current; },
+    switchTo(kind) {
+      if (current === kind) {
+        const el = get(kind); playIfNeeded(el); fadeTo(el, volumeTarget, 700);
+        return;
+      }
+      const next = get(kind);
+      const prev = current ? get(current) : null;
+      volumeTarget = 0.4;
+      if (prev) { fadeTo(prev, 0.0, 700); setTimeout(() => { try { prev.pause(); } catch {} }, 720); }
+      next.volume = 0.0; playIfNeeded(next); fadeTo(next, volumeTarget, 700); current = kind;
+    },
+    fadeTo(vol, ms) {
+      volumeTarget = vol; if (!current) return; const el = get(current); fadeTo(el, vol, ms);
+    },
+    duckTo(vol, ms) { this.fadeTo(vol, ms); },
+    restore(ms = 800) { this.fadeTo(this.base(), ms); },
+  };
+}
+const music = createMusicManager();
 
 // Word list for random prompts (aligned with server; no duplicates)
 const WORDS = [
@@ -476,7 +762,7 @@ function randomPastel() {
 
 function spawnBubble(text, fromId = '') {
   if (!isRecorder) return; // visible uniquement pour le Sound Maker
-  const targets = [els.recorderBubbles, els.bubblesLayer].filter(Boolean);
+  const targets = [els.recorderBubbles, els.bubblesLayer, els.guessesArea].filter(Boolean);
   if (targets.length === 0) return;
   const make = (layer) => {
     try { layer.classList.remove('hidden'); } catch {}
@@ -563,17 +849,34 @@ function stopRoundTimer() {
 
 function show(section) {
   els.home?.classList.add('hidden');
-  els.auth.classList.add('hidden');
-  els.lobby.classList.add('hidden');
-  els.round.classList.add('hidden');
-  els.ended.classList.add('hidden');
-  try { els.shop.classList.add('hidden'); } catch {}
-  const target = (section || els.auth);
+  try { els.auth?.classList.add('hidden'); } catch {}
+  els.lobby?.classList.add('hidden');
+  els.round?.classList.add('hidden');
+  const leavingEnded = !section || section !== els.ended;
+  if (leavingEnded) {
+    try { stopEndConfettiLoop(); } catch {}
+  }
+  els.ended?.classList.add('hidden');
+  try { els.shop?.classList.add('hidden'); } catch {}
+  const target = (section || els.home);
   target.classList.remove('hidden');
   try { target.classList.add('fade-in'); setTimeout(() => target.classList.remove('fade-in'), 300); } catch {}
   // Tabs visibility handled later when guess view is active for devineurs
   try { els.bottomTabs.classList.add('hidden'); } catch {}
   try { els.wave.classList.add('hidden'); } catch {}
+  // Toggle header visibility for Home screen
+  try {
+    const onHome = (target === els.home);
+    document.body.classList.toggle('home-mode', onHome);
+  } catch {}
+  // Background music routing by screen
+  try {
+    if (target === els.home || target === els.lobby || target === els.shop) {
+      music.switchTo('lobby');
+    } else if (target === els.round || target === els.ended) {
+      music.switchTo('game');
+    }
+  } catch {}
 }
 
 function startGuessTimer() {
@@ -581,8 +884,11 @@ function startGuessTimer() {
   guessStartAt = Date.now();
   setStatusBanner('Devinez ! (20s)', 'info');
   try {
-    if (els.guesserTimer) els.guesserTimer.classList.remove('hidden');
-    if (els.guesserTimerBadge) { els.guesserTimerBadge.classList.remove('warn','danger'); els.guesserTimerBadge.textContent = '00:20'; }
+    // Hide legacy badge timer; we use the round-style timer for guessers too
+    if (els.guesserTimer) els.guesserTimer.classList.add('hidden');
+    if (els.guesserTimerBadge) els.guesserTimerBadge.classList.add('hidden');
+    // Ensure our round-style guess timer shows the correct initial text
+    if (document.getElementById('guessRoundTimer')) document.getElementById('guessRoundTimer').textContent = '00:20';
   } catch {}
   startChrono(20000);
   // Keep legacy handle to allow stopGuessTimer() to cancel separately if needed
@@ -600,28 +906,49 @@ function stopGuessTimer() {
 }
 
 function updateRoomUI(snap) {
-  // players list (modern)
+  // players list (legacy + new lobby)
   try {
     const was = lastPlayersCount;
-    els.players.innerHTML = '';
-    snap.players.forEach(p => {
-      const li = document.createElement('li');
-      li.className = 'pop-in';
-      let av;
-      if (p.id === myId && myAvatar) {
-        av = document.createElement('img'); av.className = 'avatar-img'; av.src = avatarUrl(myAvatar); av.alt = 'avatar';
-      } else {
-        av = document.createElement('div'); av.className = 'avatar'; av.style.background = colorForId(p.id);
-        av.textContent = (p.name || '?').slice(0,1).toUpperCase();
-      }
-      const name = document.createElement('div'); name.className = 'name'; name.textContent = p.name;
-      if (p.isHost) { const host = document.createElement('span'); host.className = 'host'; host.textContent = ' (hôte)'; name.appendChild(host); }
-      const status = document.createElement('div'); status.className = 'status';
-      li.appendChild(av);
-      li.appendChild(name);
-      li.appendChild(status);
-      els.players.appendChild(li);
-    });
+    const arr = snap.players.slice().sort((a,b) => (b.isHost?1:0) - (a.isHost?1:0)); // host first
+    // Legacy list if present
+    if (els.players) {
+      els.players.innerHTML = '';
+      arr.forEach(p => {
+        const li = document.createElement('li');
+        li.className = 'pop-in';
+        let av;
+        if (p.id === myId && myAvatar) {
+          av = document.createElement('img'); av.className = 'avatar-img'; av.src = avatarUrl(myAvatar); av.alt = 'avatar';
+        } else {
+          av = document.createElement('div'); av.className = 'avatar'; av.style.background = colorForId(p.id);
+          av.textContent = (p.name || '?').slice(0,1).toUpperCase();
+        }
+        const name = document.createElement('div'); name.className = 'name'; name.textContent = p.name;
+        if (p.isHost) { const host = document.createElement('span'); host.className = 'host'; host.textContent = ' (hôte)'; name.appendChild(host); }
+        const status = document.createElement('div'); status.className = 'status';
+        li.appendChild(av); li.appendChild(name); li.appendChild(status);
+        els.players.appendChild(li);
+      });
+    }
+    // New lobby list
+    if (els.playerList) {
+      els.playerList.innerHTML = '';
+      arr.forEach(p => {
+        const li = document.createElement('li');
+        li.className = 'player-item pop-in';
+        const avatar = document.createElement('div'); avatar.className = 'pi-avatar';
+        if (p.id === myId && myAvatar) {
+          const img = document.createElement('img'); img.src = avatarUrl(myAvatar); img.alt = 'avatar'; avatar.appendChild(img);
+        } else {
+          const circle = document.createElement('div'); circle.className = 'pi-fallback'; circle.style.background = colorForId(p.id); circle.textContent = (p.name || '?').slice(0,1).toUpperCase(); avatar.appendChild(circle);
+        }
+        const name = document.createElement('div'); name.className = 'pi-name'; name.textContent = p.name || '—';
+        const right = document.createElement('div'); right.className = 'pi-right';
+        if (p.isHost) { const badge = document.createElement('span'); badge.className = 'badge host'; badge.textContent = 'HÔTE'; right.appendChild(badge); }
+        li.appendChild(avatar); li.appendChild(name); li.appendChild(right);
+        els.playerList.appendChild(li);
+      });
+    }
     lastPlayersCount = snap.players.length;
     if (lastPlayersCount > was) { plop(); vibrate(8); }
   } catch {}
@@ -644,6 +971,7 @@ function updateRoomUI(snap) {
   // replays
   const renderReplaysInto = (container) => {
     container.innerHTML = '';
+    console.log('[ended] renderReplaysInto into', container?.id);
     snap.history.forEach((h, i) => {
       if (!h.audioBase64) return; // skip if no audio
       const src = `data:${h.audioMime || 'audio/webm'};base64,${h.audioBase64}`;
@@ -651,76 +979,66 @@ function updateRoomUI(snap) {
       if (word === '—') { try { console.warn('[replay] missing secret for history item', h); } catch {} }
       const winnerName = nameOf(h.winnerId);
       const missed = !h.winnerId;
+      // Image thumb from history image or slug fallback
+      let imgSrc = '';
+      try {
+        if (h.image) imgSrc = h.image;
+        if (!imgSrc && word && word !== '—') {
+          const slug = word.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().replace(/[^a-z0-9\s-]/g, '').trim().replace(/\s+/g, '-');
+          imgSrc = `/assets/imagemot/${slug}.jpg`;
+        }
+      } catch {}
 
       const card = document.createElement('div');
       card.className = 'replay-card';
 
+      const img = document.createElement('img');
+      img.className = 'replay-img';
+      if (imgSrc) img.src = imgSrc;
+      img.alt = word || 'replay';
+
+      const textWrap = document.createElement('div');
       const wordEl = document.createElement('div');
       wordEl.className = 'replay-word';
-      wordEl.textContent = `Mot: ${word}`;
-
+      wordEl.textContent = word || '—';
       const meta = document.createElement('div');
       meta.className = 'replay-meta';
       meta.textContent = missed
-        ? `🔊 par ${nameOf(h.recorderId)} — ❌ non trouvé`
-        : `🔊 par ${nameOf(h.recorderId)} — trouvé par ${winnerName}`;
+        ? `de ${nameOf(h.recorderId)} — ❌ non trouvé`
+        : `de ${nameOf(h.recorderId)} — trouvé par ${winnerName}`;
+      textWrap.appendChild(wordEl);
+      textWrap.appendChild(meta);
 
       const controls = document.createElement('div');
       controls.className = 'replay-controls';
-
       const btn = document.createElement('button');
       btn.className = 'play-btn';
       btn.textContent = '▶';
-      btn.setAttribute('aria-label', 'Lecture');
+      controls.appendChild(btn);
 
-      const prog = document.createElement('div');
-      prog.className = 'progress';
-      const progFill = document.createElement('div');
-      prog.appendChild(progFill);
-
-      const right = document.createElement('div');
-      right.className = 'duration';
-      right.textContent = '0:00';
-
-      const bars = document.createElement('div');
-      bars.className = 'bars';
-      bars.innerHTML = '<span></span><span></span><span></span><span></span>';
-
-      // Hidden audio element
-      const audio = document.createElement('audio');
-      audio.src = src;
-      audio.preload = 'metadata';
-      audio.style.display = 'none';
-
-      audio.addEventListener('loadedmetadata', () => {
-        try { right.textContent = formatTime(Math.round(audio.duration * 1000)); } catch {}
-      });
-      audio.addEventListener('timeupdate', () => {
-        try {
-          const dur = audio.duration || 0;
-          const pct = dur ? (audio.currentTime / dur) * 100 : 0;
-          progFill.style.width = `${pct.toFixed(1)}%`;
-        } catch {}
-      });
+      // Build Audio element
+      const audio = new Audio(src);
+      audio.preload = 'none';
+      audio.crossOrigin = 'anonymous';
+      audio.playsInline = true;
+      audio.addEventListener('play', () => { card.classList.add('playing'); btn.textContent = '⏸'; });
+      audio.addEventListener('pause', () => { card.classList.remove('playing'); btn.textContent = '▶'; });
       audio.addEventListener('ended', () => {
         card.classList.remove('playing');
         btn.textContent = '▶';
         currentReplayAudio = null;
       });
-
       btn.addEventListener('click', () => {
         try {
-          // Stop any currently playing replay
           if (currentReplayAudio && currentReplayAudio !== audio) {
             currentReplayAudio.pause();
             currentReplayAudio.dispatchEvent(new Event('ended'));
           }
           if (audio.paused) {
-            audio.currentTime = 0;
             audio.play();
-            currentReplayAudio = audio;
             card.classList.add('playing');
             btn.textContent = '⏸';
+            currentReplayAudio = audio;
             vibrate(10);
           } else {
             audio.pause();
@@ -731,17 +1049,10 @@ function updateRoomUI(snap) {
         } catch (e) { console.warn('replay play error', e); }
       });
 
-      controls.appendChild(btn);
-      controls.appendChild(prog);
-      controls.appendChild(right);
-
-      card.appendChild(wordEl);
-      card.appendChild(meta);
+      // Assemble card (img | texts | button)
+      card.appendChild(img);
+      card.appendChild(textWrap);
       card.appendChild(controls);
-      card.appendChild(bars);
-      card.appendChild(audio);
-
-      if (missed) card.classList.add('missed');
       container.appendChild(card);
     });
   };
@@ -765,7 +1076,8 @@ function updateRoomUI(snap) {
     const me = snap.players.find(p => p.id === myId);
     const amHost = !!me?.isHost;
     const inLobby = snap.state === 'lobby';
-    if (els.launchBtn) els.launchBtn.classList.toggle('hidden', !(amHost && inLobby));
+    const startEl = els.startGame || els.launchBtn;
+    if (startEl) startEl.disabled = !(amHost && inLobby);
     if (els.waitingHostMsg) els.waitingHostMsg.classList.toggle('hidden', amHost || !inLobby);
   } catch {}
 }
@@ -826,27 +1138,100 @@ function connectWS() {
     if (type === 'secret') {
       // Private message to recorder only
       if (!payload?.word) return;
+      // Safety: ensure this secret is indeed for me
+      if (recorderIdExpected && recorderIdExpected !== myId) {
+        console.warn('[secret] ignoring secret not for me', { recorderIdExpected, myId });
+        return;
+      }
+      receivedSecretThisRound = true;
+      // Claim recorder role on secret reception
+      isRecorder = true;
+      try {
+        document.body.classList.add('role-recorder');
+        document.body.classList.remove('role-guesser');
+        // Show recorder UI and hide guesser UI
+        els.recorderView?.classList.remove('hidden');
+        els.recorderControls?.classList.remove('hidden');
+        els.waitingView?.classList.add('hidden');
+        els.guessView?.classList.add('hidden');
+        els.panelChat?.classList.add('hidden');
+        els.bottomTabs?.classList.add('hidden');
+        if (els.chatInput) els.chatInput.disabled = true;
+        if (els.sendChatBtn) els.sendChatBtn.disabled = true;
+        // Show banner now that we truly are recorder
+        if (els.recBanner) { els.recBanner.classList.remove('hidden'); els.recBanner.style.display = ''; els.yourTurnTitle.textContent = nameOf(myId) || 'Toi'; }
+        // Remove any guesser round-timer
+        const t = document.getElementById('guessRoundTimer');
+        if (t && t.parentNode) t.parentNode.removeChild(t);
+        els.guessRoundTimer = null;
+      } catch {}
       currentSecretNorm = normalizeTextLocal(payload.word);
-      try { els.secretWordDisplay.textContent = payload.word; } catch {}
+      try {
+        // Debug: log the received secret payload
+        console.log('[secret] received', payload);
+        els.secretWordDisplay.textContent = (payload.word || '').toString().toUpperCase();
+      } catch {}
+      // Update SoundMaker word card
+      try {
+        if (els.wordTitle) els.wordTitle.textContent = (payload.word || '').toString().toUpperCase();
+        if (els.wordImage) {
+          // Prefer exact path provided by server to avoid slug mismatches
+          let src = (payload.image || '').toString();
+          if (!src) {
+            // Fallback: best-effort slug if server did not provide image path
+            const slug = (payload.word || '')
+              .toString()
+              .normalize('NFD')
+              .replace(/\p{Diacritic}/gu, '')
+              .toLowerCase()
+              .replace(/[^a-z0-9\s-]/g, '')
+              .trim()
+              .replace(/\s+/g, '-');
+            src = `/assets/imagemot/${slug}.jpg`;
+            console.log('[secret] no image from server, fallback slug src=', src);
+          }
+          els.wordImage.classList.remove('fade-in');
+          els.wordImage.src = src;
+          // fade-in when loaded
+          els.wordImage.onload = () => { try { els.wordImage.classList.add('fade-in'); } catch {} };
+        }
+      } catch {}
       try {
         els.recorderView.classList.remove('hidden');
         if (isRecorder) {
           // Ensure recorder UI is ready to record
-          els.recorderControls.classList.remove('hidden');
-          els.recorderWait.classList.add('hidden');
+          els.recorderControls?.classList.remove('hidden');
+          els.recorderWait?.classList.add('hidden');
           els.startRecBtn.disabled = false;
           els.stopRecBtn.disabled = true;
           // Reset guess-phase flag when a new secret arrives for recorder
           guessPhaseStarted = false;
+          // Force role + hide duplicate timers immediately
+          try {
+            document.body.classList.add('role-recorder');
+            document.body.classList.remove('role-guesser');
+            getTimerWrap()?.classList.add('hidden');
+            els.timerBadge?.classList.add('hidden');
+            if (els.timerBadge) els.timerBadge.style.display = 'none';
+            els.guesserTimer?.classList.add('hidden');
+            els.guesserTimerBadge?.classList.add('hidden');
+          } catch {}
         }
       } catch {}
+      // Update label: we are confirmed recorder now
+      try { setTurnLabel('Votre tour 🎤'); } catch {}
       // Prepare bubbles layer immediately for recorder
       try { (els.recorderBubbles || els.bubblesLayer)?.classList.remove('hidden'); console.log('[bubbles] layer visible (secret)'); } catch {}
       return;
     }
 
     if (type === 'roundStarted') {
-      isRecorder = (payload.byId === myId);
+      // Hide any transition overlay when new round starts
+      hideTransitionOverlay();
+      recorderIdExpected = payload.byId;
+      // Default to guesser UI for all; only the true recorder will receive 'secret' and switch
+      isRecorder = false;
+      receivedSecretThisRound = false;
       els.chatLog.innerHTML = '';
       show(els.round);
       // Reset any previous timers/audio state on new round
@@ -855,25 +1240,26 @@ function connectWS() {
       try { if (mediaRecorder && mediaRecorder.state !== 'inactive') { mediaRecorder.stop(); mediaRecorder.stream.getTracks().forEach(t => t.stop()); } } catch {}
       try { stopGuessTimer(); } catch {}
       try { stopAudioLoop(true); } catch {}
-      try { document.querySelector('.timer-wrap')?.classList.remove('hidden'); } catch {}
-      if (isRecorder) {
-        els.recorderControls.classList.remove('hidden');
-        els.recorderView.classList.remove('hidden');
-        els.waitingView.classList.add('hidden');
-        // Re-enable recording controls for the new recorder
-        try { els.startRecBtn.disabled = false; els.stopRecBtn.disabled = true; } catch {}
-        // Recorder should not see guess input
-        try { els.chatRow.classList.add('hidden'); els.chatInput.disabled = true; els.sendChatBtn.disabled = true; } catch {}
-        // Ensure recorder waiting note is hidden at start of their turn
-        try { els.recorderWait.classList.add('hidden'); } catch {}
-      } else {
-        els.recorderControls.classList.add('hidden');
+      // Keep header timer hidden by default; we'll manage per-role below
+      try { document.querySelector('.timer-wrap')?.classList.add('hidden'); } catch {}
+      {
+        els.recorderControls?.classList.add('hidden');
         els.recorderView.classList.add('hidden');
-        els.waitingView.classList.remove('hidden');
-        // Hide guesser badge until audio starts
+        // Show proper guesser screen right away
+        els.waitingView.classList.add('hidden');
+        try { if (els.recBanner) { els.recBanner.classList.add('hidden'); els.recBanner.style.display = 'none'; } } catch {}
+        // Forcefully reset any recorder-only UI on non-recorder clients
+        try { currentSecretNorm = null; } catch {}
+        try { if (els.startRecBtn) els.startRecBtn.disabled = true; } catch {}
+        try { if (els.stopRecBtn) els.stopRecBtn.disabled = true; } catch {}
+        try { if (els.wordTitle) els.wordTitle.textContent = '—'; } catch {}
+        try { if (els.wordImage) { els.wordImage.removeAttribute('src'); els.wordImage.classList.remove('fade-in'); } } catch {}
+        // Ensure header timer stays hidden and show chat UI
         try { if (els.guesserTimer) els.guesserTimer.classList.add('hidden'); } catch {}
         try { els.waitingMsg.textContent = ` Attends quelques secondes pendant que ${payload.byName} bruit son mot mystère…`; } catch {}
-        els.guessView.classList.add('hidden');
+        els.guessView.classList.remove('hidden');
+        try { els.panelChat?.classList.remove('hidden'); els.bottomTabs?.classList.remove('hidden'); } catch {}
+        try { els.chatRow?.classList.remove('hidden'); els.chatInput.disabled = false; els.sendChatBtn.disabled = !els.chatInput.value.trim(); } catch {}
         document.body.classList.add('role-guesser');
         document.body.classList.remove('role-recorder');
         // Masquer les bulles côté devineurs
@@ -881,7 +1267,48 @@ function connectWS() {
           (els.recorderBubbles || els.bubblesLayer)?.classList.add('hidden');
           console.log('[bubbles] layer hidden (not recorder)');
         } catch {}
+        try { document.querySelector('.timer-wrap')?.classList.add('hidden'); } catch {}
+        // Insert a round-style timer in guess view to mirror SoundMaker's timer
+        try {
+          if (!document.getElementById('guessRoundTimer')) {
+            const t = document.createElement('div');
+            t.id = 'guessRoundTimer';
+            t.className = 'round-timer';
+            t.textContent = '00:30';
+            els.guessRoundTimer = t;
+            const container = els.guessView || document.getElementById('guessView');
+            if (container) container.insertBefore(t, container.firstChild);
+          } else {
+            els.guessRoundTimer = document.getElementById('guessRoundTimer');
+          }
+        } catch {}
       }
+      // Guard mismatch: if marked recorder but we don't receive a secret quickly, switch to guesser UI
+      try {
+        if (isRecorder) {
+          setTimeout(() => {
+            if (!receivedSecretThisRound) {
+              console.warn('[guard] No secret received; switching to guesser UI');
+              isRecorder = false;
+              try { els.recorderControls?.classList.add('hidden'); els.recorderView?.classList.add('hidden'); els.recBanner?.classList.add('hidden'); } catch {}
+              try { els.waitingView?.classList.add('hidden'); els.guessView?.classList.remove('hidden'); els.panelChat?.classList.remove('hidden'); els.bottomTabs?.classList.remove('hidden'); } catch {}
+              try { els.chatRow?.classList.remove('hidden'); els.chatInput.disabled = false; els.sendChatBtn.disabled = !els.chatInput.value.trim(); } catch {}
+              try { document.body.classList.remove('role-recorder'); document.body.classList.add('role-guesser'); } catch {}
+              try { document.querySelector('.timer-wrap')?.classList.add('hidden'); } catch {}
+              // Ensure guess-round timer is present
+              try {
+                if (!document.getElementById('guessRoundTimer')) {
+                  const t = document.createElement('div');
+                  t.id = 'guessRoundTimer'; t.className = 'round-timer'; t.textContent = '00:30';
+                  const container = els.guessView || document.getElementById('guessView');
+                  if (container) container.insertBefore(t, container.firstChild);
+                  els.guessRoundTimer = t;
+                }
+              } catch {}
+            }
+          }, 1500);
+        }
+      } catch {}
       try { document.body.classList.remove('timeup'); } catch {}
       stopAudioLoop(true);
       // Update local snapshot to highlight recorder immediately
@@ -889,11 +1316,12 @@ function connectWS() {
       snapshot.current = { recorderId: payload.byId };
       lastCorrectAnswer = '';
       const roundLabel = (payload.round && payload.total) ? ` · Manche ${payload.round}/${payload.total}` : '';
-      setTurnLabel((isRecorder ? 'Votre tour 🎤' : `C'est au tour de ${payload.byName} 🎤`) + roundLabel + (isRecorder ? '' : ' — Devinez !'));
+      setTurnLabel(`C'est au tour de ${payload.byName} 🎤` + roundLabel + ' — Devinez !');
       setStatusBanner('Manche en cours', 'info');
       // Default to chat tab for guessing
       setActiveTab('chat');
-      // Immersive 30s recording window for everyone
+      // Immersive 30s window visible à tous: recorder et devineurs (même timer visuel)
+      // Devineurs basculeront ensuite sur 20s à la réception de l'audio
       startChrono(30000);
       els.sendChatBtn.disabled = !els.chatInput.value.trim();
       logMsg(`Manche lancée par ${payload.byName}`);
@@ -915,20 +1343,26 @@ function connectWS() {
         // Force restart of guess timer to ensure visibility
         stopGuessTimer();
         startGuessTimer();
-        // Ensure timer header is visible
-        try { document.querySelector('.timer-wrap')?.classList.remove('hidden'); } catch {}
+        // Ensure header timer remains hidden for guessers
+        try { document.querySelector('.timer-wrap')?.classList.add('hidden'); } catch {}
         // Enable input for guessers
         try { els.chatRow.classList.remove('hidden'); els.chatInput.disabled = false; els.sendChatBtn.disabled = !els.chatInput.value.trim(); } catch {}
         // Prepare audio loop
         loopAudioSrc = src;
-        if (!allowSound) { try { els.enableSoundWrap.classList.remove('hidden'); } catch {} }
-        else { startAudioLoop(); }
+        // If autoplay is not allowed yet, reveal enable banner proactively and install unlock handler
+        try { if (!allowSound) { els.enableSoundWrap?.classList.remove('hidden'); setupAutoplayUnlock(); } } catch {}
+        // Attempt autoplay; if blocked, the catch in startAudioLoop will keep the enable banner visible
+        startAudioLoop();
       }
       return;
     }
 
     if (type === 'chat') {
-      logMsg(`${payload.from}: ${payload.text}`);
+      if (snapshot?.state === 'lobby' && els.chatLogLobby) {
+        logLobbyMsg(`${payload.from}: ${payload.text}`);
+      } else {
+        logMsg(`${payload.from}: ${payload.text}`);
+      }
       // Recorder-only fuzzy hint if guess is very close (client-side guidance only)
       if (isRecorder && currentSecretNorm) {
         const d = levenshtein(payload.text, currentSecretNorm);
@@ -990,6 +1424,28 @@ function connectWS() {
       snapshot.history = payload.history || snapshot.history;
       // Clear current recorder highlight locally
       if (snapshot) snapshot.current = null;
+      // Force role reset to prevent stale recorder UI on next rounds
+      isRecorder = false;
+      receivedSecretThisRound = false;
+      try { els.recorderControls?.classList.add('hidden'); els.recorderView?.classList.add('hidden'); } catch {}
+      try { document.body.classList.remove('role-recorder'); document.body.classList.remove('role-guesser'); } catch {}
+      try { getTimerWrap()?.classList.add('hidden'); } catch {}
+      // Remove guesser round timer
+      try {
+        const t = document.getElementById('guessRoundTimer');
+        if (t && t.parentNode) t.parentNode.removeChild(t);
+        els.guessRoundTimer = null;
+      } catch {}
+      // Show transition overlay with countdown unless party is complete
+      try {
+        console.log('[transition] roundEnded payload', payload);
+        const seconds = Math.max(0, Math.round((payload?.nextInMs ?? 5000) / 1000));
+        if (seconds > 0) {
+          showTransitionOverlay(payload.roundResult || {}, seconds);
+        } else {
+          hideTransitionOverlay();
+        }
+      } catch (e) { console.warn('[transition] show error', e); }
       // Decide banner message by reason
       const reason = payload?.reason || '';
       if (reason === 'guessing-timeout' || reason === 'recording-timeout') {
@@ -1008,8 +1464,8 @@ function connectWS() {
       // Masquer overlays
       try { els.bubblesLayer.classList.add('hidden'); els.winnerToast.classList.add('hidden'); } catch {}
       try { document.body.classList.remove('role-recorder'); document.body.classList.remove('role-guesser'); } catch {}
-      show(els.lobby);
-      updateRoomUI(snapshot);
+      // Ne pas forcer un screen switch qui pourrait recouvrir l'overlay; on reste sur la vue courante pendant la transition
+      try { updateRoomUI(snapshot); } catch {}
       return;
     }
 
@@ -1021,6 +1477,8 @@ function connectWS() {
     }
 
     if (type === 'gameEnded') {
+      // Ensure any transition overlay is hidden before showing final results
+      try { hideTransitionOverlay(); } catch {}
       // Render leaderboard
       const arr = payload.leaderboard.slice().sort((a,b) => b.score - a.score);
       const [g, s, b3] = [arr[0], arr[1], arr[2]];
@@ -1035,12 +1493,24 @@ function connectWS() {
         document.querySelector('.podium .bronze')?.classList.toggle('hidden', !b3);
       } catch {}
 
-      // Full leaderboard beyond top 3
+      // Full leaderboard beyond top 3 (styled items)
       try {
         els.leaderboardFull.innerHTML = '';
-        arr.forEach((p, i) => {
+        arr.slice(3).forEach((p, idx) => {
+          const i = idx + 3;
           const li = document.createElement('li');
-          li.innerHTML = `<span>${i+1}. ${p.name}</span><span>${p.score}</span>`;
+          li.className = 'lb-item pop-in';
+          const rank = document.createElement('div'); rank.className = 'lb-rank'; rank.textContent = String(i+1);
+          const avatar = document.createElement('div'); avatar.className = 'lb-avatar';
+          if (p.id === myId && myAvatar) {
+            const im = document.createElement('img'); im.src = avatarUrl(myAvatar); im.alt = 'avatar'; avatar.appendChild(im);
+          } else {
+            avatar.style.background = colorForId(p.id);
+            avatar.textContent = (p.name || '?').slice(0,1).toUpperCase();
+          }
+          const name = document.createElement('div'); name.className = 'lb-name'; name.textContent = '@' + (p.name || '—');
+          const score = document.createElement('div'); score.className = 'lb-score'; score.textContent = `${p.score} pts`;
+          li.appendChild(rank); li.appendChild(avatar); li.appendChild(name); li.appendChild(score);
           els.leaderboardFull.appendChild(li);
         });
       } catch {}
@@ -1061,8 +1531,12 @@ function connectWS() {
       stopGuessTimer();
       if (snapshot) snapshot.current = null;
       try { els.bubblesLayer.classList.add('hidden'); els.winnerToast.classList.add('hidden'); } catch {}
-      // Slower celebratory transition to end screen
-      setTimeout(() => { show(els.ended); try { confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 } }); } catch {} }, 900);
+      // Slower celebratory transition to end screen + start confetti loop
+      setTimeout(() => {
+        show(els.ended);
+        try { confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 } }); } catch {}
+        try { startEndConfettiLoop(); } catch {}
+      }, 900);
       return;
     }
 
@@ -1080,20 +1554,79 @@ function send(type, payload) {
   if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type, payload }));
 }
 
-// UI wires
-els.createBtn.addEventListener('click', () => {
-  const name = els.nickname.value.trim() || 'Player';
-  if (!ws || ws.readyState !== WebSocket.OPEN) connectWS();
-  setTimeout(() => send('createLobby', { name }), 50);
-});
+// UI wires (legacy auth screen guarded)
+try {
+  if (els.createBtn) {
+    els.createBtn.addEventListener('click', () => {
+      const name = (els.nickname?.value || '').trim() || 'Player';
+      console.log('[ux-refresh] legacy create lobby');
+      sendWhenReady('createLobby', { name });
+    });
+  }
+  if (els.joinBtn && els.joinCode) {
+    els.joinBtn.addEventListener('click', () => {
+      const name = (els.nickname?.value || '').trim() || 'Player';
+      const code = (els.joinCode.value || '').trim().toUpperCase();
+      if (!code) { setStatusBanner('Code introuvable.', 'danger'); return; }
+      sendWhenReady('joinLobby', { code, name });
+    });
+  }
+} catch {}
 
-els.joinBtn.addEventListener('click', () => {
-  const name = els.nickname.value.trim() || 'Player';
-  const code = (els.joinCode.value || '').trim().toUpperCase();
-  if (!code) return alert('Entrez un code.');
-  if (!ws || ws.readyState !== WebSocket.OPEN) connectWS();
-  setTimeout(() => send('joinLobby', { code, name }), 50);
-});
+// UX refresh — Home screen wires
+try {
+  // Nickname: load, validate, persist
+  const nickKey = 'noiseio_nick';
+  const validateNick = (v) => !!v && v.trim().length >= 3 && v.trim().length <= 15;
+  const saveNick = (v) => { const n = v.trim(); try { localStorage.setItem(nickKey, n); } catch {} try { if (els.greetName) els.greetName.textContent = `Salut ${n} 👋`; } catch {} console.log('[ux-refresh] nickname updated → "%s"', n); };
+  try {
+    const existing = (localStorage.getItem(nickKey) || '').trim();
+    if (els.nickname && existing) els.nickname.value = existing;
+  } catch {}
+  if (els.nickname) {
+    els.nickname.addEventListener('input', (e) => {
+      const v = e.target.value || '';
+      try { if (els.nickHint) els.nickHint.classList.toggle('hidden', validateNick(v)); } catch {}
+    });
+    els.nickname.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); const v = els.nickname.value || ''; if (validateNick(v)) saveNick(v); else { try { els.nickHint?.classList.remove('hidden'); } catch {} } }
+    });
+    els.nickname.addEventListener('blur', () => { const v = els.nickname.value || ''; if (validateNick(v)) saveNick(v); });
+  }
+
+  // Join: uppercase transform + submit
+  const doJoinHome = () => {
+    const code = (els.joinCode?.value || '').trim().toUpperCase();
+    if (!code) { setStatusBanner('Entrez un code.', 'danger'); vibrate(12); return; }
+    const name = (els.nickname?.value || '').trim() || getNickname();
+    console.log('[ux-refresh] home: join code=%s', code);
+    sendWhenReady('joinLobby', { code, name });
+  };
+  if (els.joinCode) {
+    els.joinCode.addEventListener('input', (e) => { e.target.value = (e.target.value || '').toUpperCase(); });
+    els.joinCode.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); doJoinHome(); } });
+  }
+  if (els.joinSubmit) els.joinSubmit.addEventListener('click', doJoinHome);
+
+  // Create game CTA
+  if (els.createGame) {
+    console.log('[ux-refresh] bind createGame click');
+    const createLobbyNow = () => {
+      try {
+        const name = (els.nickname?.value || '').trim() || getNickname();
+        console.log('[ux-refresh] home: create new lobby');
+        sendWhenReady('createLobby', { name });
+        vibrate(15);
+      } catch (e) { console.warn('[ux-refresh] createGame error', e); }
+    };
+    els.createGame.addEventListener('click', (e) => { e.preventDefault(); createLobbyNow(); });
+    // Fallback delegation in case of re-render
+    document.addEventListener('click', (e) => {
+      const t = e.target.closest && e.target.closest('#createGame');
+      if (t) { e.preventDefault(); createLobbyNow(); }
+    });
+  }
+} catch {}
 
 // Landing actions
 try {
@@ -1149,6 +1682,47 @@ try {
 try { els.openAvatarBtn.addEventListener('click', () => { openAvatarModal(); vibrate(8); }); } catch {}
 try { els.closeAvatarBtn.addEventListener('click', closeAvatarModal); } catch {}
 try { els.avatarModal.addEventListener('click', (e) => { if (e.target === els.avatarModal) closeAvatarModal(); }); } catch {}
+// Home avatar button opens the same modal
+try { if (els.homeAvatarBtn) els.homeAvatarBtn.addEventListener('click', () => { openAvatarModal(); vibrate(8); }); } catch {}
+
+// Lobby tabs behavior
+function setLobbyTab(which) {
+  const playersActive = which === 'players';
+  try {
+    els.tabPlayers?.classList.toggle('active', playersActive);
+    els.tabMessages?.classList.toggle('active', !playersActive);
+    els.panelPlayers?.classList.toggle('active', playersActive);
+    els.panelMessages?.classList.toggle('active', !playersActive);
+    // Slide indicator
+    els.tabsPill?.classList.toggle('ind-messages', !playersActive);
+    console.log('[ux-refresh] lobby tab →', which);
+  } catch {}
+}
+try { els.tabPlayers?.addEventListener('click', () => setLobbyTab('players')); } catch {}
+try { els.tabMessages?.addEventListener('click', () => setLobbyTab('messages')); } catch {}
+
+// Lobby chat wiring
+try {
+  const sendLobby = () => {
+    const text = (els.chatInputLobby?.value || '').trim();
+    if (!text) return;
+    els.chatInputLobby.value = '';
+    send('chat', { text });
+  };
+  els.sendMessageLobby?.addEventListener('click', sendLobby);
+  els.chatInputLobby?.addEventListener('input', () => {
+    try { els.sendMessageLobby.disabled = !(els.chatInputLobby.value || '').trim(); } catch {}
+  });
+  els.chatInputLobby?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); sendLobby(); } });
+  els.emojiBarLobby?.addEventListener('click', (e) => {
+    const btn = e.target.closest('.emoji');
+    if (!btn) return;
+    const em = btn.textContent || '';
+    els.chatInputLobby.value = (els.chatInputLobby.value || '') + em;
+    els.chatInputLobby.focus();
+    try { els.sendMessageLobby.disabled = !(els.chatInputLobby.value || '').trim(); } catch {}
+  });
+} catch {}
 
 // Lobby actions
 try { els.copyCodeBtn.addEventListener('click', async () => {
@@ -1158,9 +1732,10 @@ try { els.copyCodeBtn.addEventListener('click', async () => {
 try { els.leaveBtn.addEventListener('click', () => { try { ws?.close(); } catch {}; location.reload(); }); } catch {}
 
 try { els.launchBtn.addEventListener('click', () => { send('startRound', {}); vibrate(20); }); } catch {}
+try { els.startGame.addEventListener('click', () => { if (els.startGame.disabled) return; send('startRound', {}); vibrate(20); }); } catch {}
 
 // Enable sound
-try { els.enableSoundBtn.addEventListener('click', () => { allowSound = true; els.enableSoundWrap.classList.add('hidden'); if (loopAudioSrc) startAudioLoop(); vibrate(15); }); } catch {}
+try { els.enableSoundBtn.addEventListener('click', () => { allowSound = true; els.enableSoundWrap.classList.add('hidden'); if (loopAudioSrc) startAudioLoop(); try { const isGame = (!els.round?.classList.contains('hidden')) || (!els.ended?.classList.contains('hidden')); music.switchTo(isGame ? 'game' : 'lobby'); } catch {} vibrate(15); }); } catch {}
 
 try { els.startRoundBtn.addEventListener('click', () => {
   // Server now picks the secret word and sends it privately
@@ -1261,10 +1836,10 @@ async function startRecording() {
     console.log('[rec] started');
     vibrate(30);
     showWave(true);
+    try { music.duckTo(0.15, 500); } catch {}
     try { els.secretWordDisplay.classList.add('pop'); setTimeout(() => els.secretWordDisplay.classList.remove('pop'), 380); } catch {}
 
-    els.startRecBtn.disabled = true;
-    els.stopRecBtn.disabled = false;
+    try { if (els.startRecBtn) els.startRecBtn.disabled = true; if (els.stopRecBtn) els.stopRecBtn.disabled = false; } catch {}
     // Mark active and start the 5s watchdog, store into recTimer for proper cleanup
     isRecordingNow = true;
     if (recTimer) { try { clearInterval(recTimer); } catch {} recTimer = null; }
@@ -1299,24 +1874,50 @@ function stopRecording() {
   // Start 20s guess phase locally (recorder won't receive audio echo)
   if (isRecorder && !guessPhaseStarted) { guessPhaseStarted = true; startGuessTimer(); }
   // Recorder UI: show waiting for guessers and hide controls
-  try { if (isRecorder) { els.recorderWait.classList.remove('hidden'); els.recorderControls.classList.add('hidden'); } } catch {}
+  try { if (isRecorder) { els.recorderWait?.classList.remove('hidden'); els.recorderControls?.classList.add('hidden'); } } catch {}
 }
 
-els.startRecBtn.addEventListener('click', () => {
-  try { console.log('[ui] startRecBtn clicked'); } catch {}
-  if (!navigator.mediaDevices?.getUserMedia) {
-    setStatusBanner('Enregistrement non supporté (getUserMedia indisponible)', 'danger');
-    alert('Votre navigateur ne permet pas l\'accès au micro. Essayez Chrome/Edge/Firefox/Safari récent.');
-    return;
-  }
-  if (!window.MediaRecorder) {
-    setStatusBanner('Enregistrement non supporté (MediaRecorder indisponible)', 'danger');
-    alert('Votre navigateur ne supporte pas MediaRecorder. Essayez un navigateur plus récent.');
-    return;
-  }
-  startRecording();
-});
-els.stopRecBtn.addEventListener('click', stopRecording);
+try { els.startRecBtn.addEventListener('click', () => {
+    try { console.log('[ui] startRecBtn clicked'); } catch {}
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setStatusBanner('Enregistrement non supporté (getUserMedia indisponible)', 'danger');
+      alert('Votre navigateur ne permet pas l\'accès au micro. Essayez Chrome/Edge/Firefox/Safari récent.');
+      return;
+    }
+    if (!window.MediaRecorder) {
+      setStatusBanner('Enregistrement non supporté (MediaRecorder indisponible)', 'danger');
+      alert('Votre navigateur ne supporte pas MediaRecorder. Essayez un navigateur plus récent.');
+      return;
+    }
+    startRecording();
+}); } catch {}
+try { els.stopRecBtn.addEventListener('click', stopRecording); } catch {}
+
+// Press-and-hold recording on the large round button
+try {
+  const pressStart = (e) => {
+    if (!isRecorder) return; e.preventDefault();
+    document.body.classList.add('recording');
+    try { els.recordButton?.classList.add('active'); } catch {}
+    if (isRecordingNow) return;
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) return;
+    startRecording();
+  };
+  const pressEnd = (e) => {
+    if (!isRecorder) return; e.preventDefault();
+    document.body.classList.remove('recording');
+    try { els.recordButton?.classList.remove('active'); } catch {}
+    stopRecording();
+  };
+  els.recordButton?.addEventListener('mousedown', pressStart);
+  els.recordButton?.addEventListener('touchstart', pressStart, { passive: false });
+  window.addEventListener('mouseup', pressEnd);
+  window.addEventListener('touchend', pressEnd, { passive: false });
+  window.addEventListener('touchcancel', pressEnd, { passive: false });
+} catch {}
+
+// New word button in SoundMaker card
+try { els.newWord?.addEventListener('click', () => { if (isRecorder) send('newWord', {}); }); } catch {}
 
 // Initial: ensure local profile and echoes visible on home menu
 try { ensureAvatar(); } catch {}
@@ -1327,6 +1928,8 @@ try {
   if (els.greetName) els.greetName.textContent = `Salut ${nick} 👋`;
   console.log('[ui] greet set for', nick);
 } catch {}
+// Apply home-mode on initial load if home is visible
+try { if (els.home && !els.home.classList.contains('hidden')) document.body.classList.add('home-mode'); } catch {}
 // Show home (or auth if older flow)
 show(els.home || els.auth);
 try { els.startRoundBtn.disabled = true; } catch {}
@@ -1525,4 +2128,3 @@ try {
     show(els.home);
   });
 } catch {}
-
