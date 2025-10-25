@@ -621,6 +621,7 @@ function createMusicManager() {
   const LS_MUSIC_MUTED = 'noiseio_music_muted';
   let baseVol = (() => { try { const v = parseFloat(localStorage.getItem(LS_MUSIC_BASE)); return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0.4; } catch { return 0.4; } })();
   let muted = (() => { try { const s = String(localStorage.getItem(LS_MUSIC_MUTED) || '').toLowerCase(); return s === '1' || s === 'true'; } catch { return false; } })();
+  let recorderSilence = false; // force volume to 0 for soundmaker
   let volumeTarget = baseVol; // target for current context
 
   function ensure(el) {
@@ -636,7 +637,7 @@ function createMusicManager() {
   function fadeTo(el, to, ms = 500) {
     stopFade();
     const from = el.volume;
-    const toEff = muted ? 0 : to;
+    const toEff = (muted || recorderSilence) ? 0 : to;
     const start = Date.now();
     if (ms <= 0) { el.volume = toEff; return; }
     fadeId = setInterval(() => {
@@ -667,6 +668,10 @@ function createMusicManager() {
     setMuted(v, ms = 200) {
       muted = !!v; try { localStorage.setItem(LS_MUSIC_MUTED, muted ? '1' : '0'); } catch {}
       if (!current) return; const el = get(current); const to = muted ? 0 : volumeTarget; fadeTo(el, to, ms);
+    },
+    setRecorderSilence(v, ms = 0) {
+      recorderSilence = !!v;
+      if (!current) return; const el = get(current); const to = recorderSilence ? 0 : volumeTarget; fadeTo(el, to, ms);
     },
     current() { return current; },
     switchTo(kind) {
@@ -1243,8 +1248,8 @@ function connectWS() {
         if (t && t.parentNode) t.parentNode.removeChild(t);
         els.guessRoundTimer = null;
       } catch {}
-      // Recorder: silence background music during their turn
-      try { music.fadeTo(0.0, 500); } catch {}
+      // Recorder: silence background music during their turn (override)
+      try { music.setRecorderSilence(true, 0); } catch {}
       currentSecretNorm = normalizeTextLocal(payload.word);
       try {
         // Debug: log the received secret payload
@@ -1342,8 +1347,15 @@ function connectWS() {
         try { els.chatRow?.classList.remove('hidden'); els.chatInput.disabled = false; els.sendChatBtn.disabled = !els.chatInput.value.trim(); } catch {}
         document.body.classList.add('role-guesser');
         document.body.classList.remove('role-recorder');
-        // Guessers: keep background music at 10% during the round
-        try { music.fadeTo(0.1, 600); } catch {}
+        // Preemptively silence the recorder device; others (guessers) keep 10%
+        try {
+          if (payload.byId === myId) {
+            music.setRecorderSilence(true, 0);
+          } else {
+            music.setRecorderSilence(false, 0);
+            music.fadeTo(0.1, 600);
+          }
+        } catch {}
         // Masquer les bulles côté devineurs
         try {
           (els.recorderBubbles || els.bubblesLayer)?.classList.add('hidden');
@@ -1373,6 +1385,7 @@ function connectWS() {
               console.warn('[guard] No secret received; switching to guesser UI');
               isRecorder = false;
               try { els.recorderControls?.classList.add('hidden'); els.recorderView?.classList.add('hidden'); } catch {}
+          try { music.setRecorderSilence(false, 0); } catch {}
               try { els.waitingView?.classList.add('hidden'); els.guessView?.classList.remove('hidden'); els.panelChat?.classList.remove('hidden'); els.bottomTabs?.classList.remove('hidden'); } catch {}
               try { els.chatRow?.classList.remove('hidden'); els.chatInput.disabled = false; els.sendChatBtn.disabled = !els.chatInput.value.trim(); } catch {}
               try { document.body.classList.remove('role-recorder'); document.body.classList.add('role-guesser'); } catch {}
@@ -1509,6 +1522,7 @@ function connectWS() {
       // Force role reset to prevent stale recorder UI on next rounds
       isRecorder = false;
       receivedSecretThisRound = false;
+      try { music.setRecorderSilence(false, 0); } catch {}
       try { els.recorderControls?.classList.add('hidden'); els.recorderView?.classList.add('hidden'); } catch {}
       try { document.body.classList.remove('role-recorder'); document.body.classList.remove('role-guesser'); } catch {}
       try { getTimerWrap()?.classList.add('hidden'); } catch {}
@@ -1554,6 +1568,7 @@ function connectWS() {
     if (type === 'roundAborted') {
       logMsg('⚠️ Manche annulée: ' + payload.reason);
       try { els.bubblesLayer.classList.add('hidden'); els.winnerToast.classList.add('hidden'); } catch {}
+      try { music.setRecorderSilence(false, 0); } catch {}
       show(els.lobby);
       return;
     }
@@ -1561,6 +1576,7 @@ function connectWS() {
     if (type === 'gameEnded') {
       // Ensure any transition overlay is hidden before showing final results
       try { hideTransitionOverlay(); } catch {}
+      try { music.setRecorderSilence(false, 0); } catch {}
       // Render leaderboard
       const arr = payload.leaderboard.slice().sort((a,b) => b.score - a.score);
       const [g, s, b3] = [arr[0], arr[1], arr[2]];
