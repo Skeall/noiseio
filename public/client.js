@@ -1317,6 +1317,15 @@ function connectWS() {
       // Default to guesser UI for all; only the true recorder will receive 'secret' and switch
       isRecorder = false;
       receivedSecretThisRound = false;
+      // Pre-apply role-based audio policy BEFORE showing round (prevents burst on mobile)
+      try {
+        if (payload.byId === myId) {
+          music.setRecorderSilence(true, 0);
+        } else {
+          music.setRecorderSilence(false, 0);
+          music.fadeTo(0.1, 0);
+        }
+      } catch {}
       els.chatLog.innerHTML = '';
       show(els.round);
       // Reset any previous timers/audio state on new round
@@ -1347,15 +1356,8 @@ function connectWS() {
         try { els.chatRow?.classList.remove('hidden'); els.chatInput.disabled = false; els.sendChatBtn.disabled = !els.chatInput.value.trim(); } catch {}
         document.body.classList.add('role-guesser');
         document.body.classList.remove('role-recorder');
-        // Preemptively silence the recorder device; others (guessers) keep 10%
-        try {
-          if (payload.byId === myId) {
-            music.setRecorderSilence(true, 0);
-          } else {
-            music.setRecorderSilence(false, 0);
-            music.fadeTo(0.1, 600);
-          }
-        } catch {}
+        // Guessers: keep background music at 10% (recorder already silenced pre-show)
+        try { if (payload.byId !== myId) music.fadeTo(0.1, 600); } catch {}
         // Masquer les bulles côté devineurs
         try {
           (els.recorderBubbles || els.bubblesLayer)?.classList.add('hidden');
