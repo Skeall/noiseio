@@ -156,7 +156,15 @@ function stopAudioLoop(immediate = false) {
     try { loopAudioEl.pause(); } catch {}
   }
   if (immediate) showWave(false);
-  try { music.restore(1000); } catch {}
+  try {
+    const isRec = document.body.classList.contains('role-recorder');
+    const isGuess = document.body.classList.contains('role-guesser');
+    if (isRec || isGuess) {
+      music.fadeTo(isRec ? 0.0 : 0.1, 800);
+    } else {
+      music.restore(800);
+    }
+  } catch {}
 }
 
 // Attempt to unlock autoplay on first user gesture and retry playback
@@ -191,21 +199,22 @@ function startAudioLoop() {
     showWave(true);
     a.onended = () => {
       if (loopStopRequested) { showWave(false); return; }
-      try { music.restore(1000); } catch {}
-      setTimeout(() => { playOnce(); }, 2000);
+      try {
+        const isRec = document.body.classList.contains('role-recorder');
+        music.fadeTo(isRec ? 0.0 : 0.1, 1000);
+      } catch {}
+      setTimeout(playOnce, 2000);
     };
     try { music.duckTo(0.1, 400); } catch {}
     const p = a.play();
-    if (p && typeof p.catch === 'function') p.catch(() => {
-      // Autoplay might be blocked → set up a one-time unlock on user gesture and show enable prompt
-      console.log('[audio] autoplay blocked, installing unlock handler');
-      setupAutoplayUnlock();
-      try { els.enableSoundWrap?.classList.remove('hidden'); } catch {}
-      showWave(false);
-  try { music.restore(800); } catch {}
-    });
-    else {
-      // Playback started → hide any enable prompt
+    if (p && typeof p.catch === 'function') {
+      p.catch(() => {
+        console.log('[audio] autoplay blocked, installing unlock handler');
+        setupAutoplayUnlock();
+        try { els.enableSoundWrap?.classList.remove('hidden'); } catch {}
+        showWave(false);
+      });
+    } else {
       try { els.enableSoundWrap?.classList.add('hidden'); } catch {}
     }
   };
@@ -326,6 +335,13 @@ const els = {
   recorderBubbles: document.getElementById('recorderBubbles'),
   bubblesLayer: document.getElementById('bubblesLayer'),
   winnerToast: document.getElementById('winnerToast'),
+  // Music controls
+  musicCtrl: document.getElementById('musicCtrl'),
+  musicMuteBtn: document.getElementById('musicMuteBtn'),
+  musicBtn: document.getElementById('musicBtn'),
+  musicPanel: document.getElementById('musicPanel'),
+  musicSlider: document.getElementById('musicSlider'),
+  musicValue: document.getElementById('musicValue'),
   // Transition overlay
   transitionOverlay: document.getElementById('transitionOverlay'),
   trTitle: document.getElementById('trTitle'),
@@ -356,8 +372,7 @@ let trInterval = null; // transition countdown interval
 
 // Avatars assets (from /public/assets/avatars)
 const AVATAR_FILES = [
-  'skin1.png','skin2.png','skin3.png','skin4.png','skin5.png','skin6.png','skin7.png','skin8.png','skin9.png','skin10.png','skin11.png','skin12.png','skin13.png','skin14.png','skin15.png','skin16.png',
-  'skin 6.png' // fallback if alternate naming exists
+  'skin1.jpg','skin2.jpg','skin3.jpg','skin4.jpg','skin5.jpg','skin6.jpg','skin7.jpg','skin8.jpg','skin9.jpg','skin10.jpg'
 ];
 
 function getAvatar() {
@@ -406,7 +421,14 @@ function hideTransitionOverlay() {
   try { if (els.trResultsList) els.trResultsList.innerHTML = ''; } catch {}
   try { document.body.classList.remove('overlay-bg'); } catch {}
   try { if (revealAudioEl) { revealAudioEl.pause(); revealAudioEl = null; } } catch {}
-  try { music.restore(800); } catch {}
+  // Restore contextual background volume after overlay
+  try {
+    const isRec = document.body.classList.contains('role-recorder');
+    const isGuess = document.body.classList.contains('role-guesser');
+    if (isRec) music.fadeTo(0.0, 800);
+    else if (isGuess) music.fadeTo(0.1, 800);
+    else music.restore(800);
+  } catch {}
 }
 
 function showTransitionOverlay(roundResult, seconds = 5) {
@@ -595,7 +617,11 @@ function createMusicManager() {
   const tracks = { lobby: null, game: null };
   let current = null; // 'lobby' | 'game' | null
   let fadeId = null;
-  let volumeTarget = 0.4; // base target for current context
+  const LS_MUSIC_BASE = 'noiseio_music_base';
+  const LS_MUSIC_MUTED = 'noiseio_music_muted';
+  let baseVol = (() => { try { const v = parseFloat(localStorage.getItem(LS_MUSIC_BASE)); return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0.4; } catch { return 0.4; } })();
+  let muted = (() => { try { const s = String(localStorage.getItem(LS_MUSIC_MUTED) || '').toLowerCase(); return s === '1' || s === 'true'; } catch { return false; } })();
+  let volumeTarget = baseVol; // target for current context
 
   function ensure(el) {
     if (!el) return;
@@ -610,11 +636,12 @@ function createMusicManager() {
   function fadeTo(el, to, ms = 500) {
     stopFade();
     const from = el.volume;
+    const toEff = muted ? 0 : to;
     const start = Date.now();
-    if (ms <= 0) { el.volume = to; return; }
+    if (ms <= 0) { el.volume = toEff; return; }
     fadeId = setInterval(() => {
       const t = Math.min(1, (Date.now() - start) / ms);
-      const v = from + (to - from) * t; el.volume = Math.max(0, Math.min(1, v));
+      const v = from + (toEff - from) * t; el.volume = Math.max(0, Math.min(1, v));
       if (t >= 1) { stopFade(); }
     }, 30);
   }
@@ -626,7 +653,21 @@ function createMusicManager() {
   }
 
   return {
-    base() { return 0.4; },
+    base() { return baseVol; },
+    setBase(v, ms = 0) {
+      const vol = Math.min(1, Math.max(0, Number(v) || 0));
+      baseVol = vol; volumeTarget = baseVol;
+      try { localStorage.setItem(LS_MUSIC_BASE, String(baseVol)); } catch {}
+      if (!current) return;
+      const el = get(current);
+      // Only lower immediately; raising happens via restore()
+      if (el.volume > baseVol) fadeTo(el, baseVol, ms);
+    },
+    isMuted() { return muted; },
+    setMuted(v, ms = 200) {
+      muted = !!v; try { localStorage.setItem(LS_MUSIC_MUTED, muted ? '1' : '0'); } catch {}
+      if (!current) return; const el = get(current); const to = muted ? 0 : volumeTarget; fadeTo(el, to, ms);
+    },
     current() { return current; },
     switchTo(kind) {
       if (current === kind) {
@@ -635,7 +676,7 @@ function createMusicManager() {
       }
       const next = get(kind);
       const prev = current ? get(current) : null;
-      volumeTarget = 0.4;
+      volumeTarget = baseVol;
       if (prev) { fadeTo(prev, 0.0, 700); setTimeout(() => { try { prev.pause(); } catch {} }, 720); }
       next.volume = 0.0; playIfNeeded(next); fadeTo(next, volumeTarget, 700); current = kind;
     },
@@ -643,10 +684,47 @@ function createMusicManager() {
       volumeTarget = vol; if (!current) return; const el = get(current); fadeTo(el, vol, ms);
     },
     duckTo(vol, ms) { this.fadeTo(vol, ms); },
+    duckFrac(frac, ms) { const f = Math.min(1, Math.max(0, Number(frac) || 0)); this.fadeTo(baseVol * f, ms); },
     restore(ms = 800) { this.fadeTo(this.base(), ms); },
   };
 }
 const music = createMusicManager();
+
+// Music control wiring (mute + slider)
+try {
+  // Ensure mute button exists even if HTML not updated
+  if (!els.musicMuteBtn && els.musicCtrl) {
+    const wrap = els.musicCtrl.querySelector('.music-buttons') || els.musicCtrl;
+    const btn = document.createElement('button');
+    btn.id = 'musicMuteBtn'; btn.className = 'music-btn';
+    btn.setAttribute('aria-label', 'Couper la musique'); btn.title = 'Couper la musique';
+    btn.textContent = '🔊';
+    if (wrap.firstChild) wrap.insertBefore(btn, wrap.firstChild); else wrap.appendChild(btn);
+    els.musicMuteBtn = btn;
+  }
+  const applyMuteIcon = () => {
+    if (!els.musicMuteBtn) return;
+    const m = music.isMuted();
+    els.musicMuteBtn.textContent = m ? '🔇' : '🔊';
+    try { els.musicMuteBtn.setAttribute('aria-label', m ? 'Activer la musique' : 'Couper la musique'); } catch {}
+    try { els.musicMuteBtn.title = m ? 'Activer la musique' : 'Couper la musique'; } catch {}
+  };
+  // Initialize UI from current music state
+  const base = music.base();
+  if (els.musicSlider) els.musicSlider.value = String(base);
+  if (els.musicValue) els.musicValue.textContent = `${Math.round(base * 100)}%`;
+  applyMuteIcon();
+  // Toggle panel
+  els.musicBtn?.addEventListener('click', () => { els.musicPanel?.classList.toggle('hidden'); });
+  // Slider updates base volume
+  els.musicSlider?.addEventListener('input', (e) => {
+    const v = parseFloat(e.target.value);
+    music.setBase(v, 200);
+    if (els.musicValue) els.musicValue.textContent = `${Math.round(v * 100)}%`;
+  });
+  // Mute toggle
+  els.musicMuteBtn?.addEventListener('click', () => { music.setMuted(!music.isMuted(), 150); applyMuteIcon(); });
+} catch {}
 
 // Word list for random prompts (aligned with server; no duplicates)
 const WORDS = [
@@ -1165,6 +1243,8 @@ function connectWS() {
         if (t && t.parentNode) t.parentNode.removeChild(t);
         els.guessRoundTimer = null;
       } catch {}
+      // Recorder: silence background music during their turn
+      try { music.fadeTo(0.0, 500); } catch {}
       currentSecretNorm = normalizeTextLocal(payload.word);
       try {
         // Debug: log the received secret payload
@@ -1262,6 +1342,8 @@ function connectWS() {
         try { els.chatRow?.classList.remove('hidden'); els.chatInput.disabled = false; els.sendChatBtn.disabled = !els.chatInput.value.trim(); } catch {}
         document.body.classList.add('role-guesser');
         document.body.classList.remove('role-recorder');
+        // Guessers: keep background music at 10% during the round
+        try { music.fadeTo(0.1, 600); } catch {}
         // Masquer les bulles côté devineurs
         try {
           (els.recorderBubbles || els.bubblesLayer)?.classList.add('hidden');
@@ -1290,7 +1372,7 @@ function connectWS() {
             if (!receivedSecretThisRound) {
               console.warn('[guard] No secret received; switching to guesser UI');
               isRecorder = false;
-              try { els.recorderControls?.classList.add('hidden'); els.recorderView?.classList.add('hidden'); els.recBanner?.classList.add('hidden'); } catch {}
+              try { els.recorderControls?.classList.add('hidden'); els.recorderView?.classList.add('hidden'); } catch {}
               try { els.waitingView?.classList.add('hidden'); els.guessView?.classList.remove('hidden'); els.panelChat?.classList.remove('hidden'); els.bottomTabs?.classList.remove('hidden'); } catch {}
               try { els.chatRow?.classList.remove('hidden'); els.chatInput.disabled = false; els.sendChatBtn.disabled = !els.chatInput.value.trim(); } catch {}
               try { document.body.classList.remove('role-recorder'); document.body.classList.add('role-guesser'); } catch {}
@@ -1836,7 +1918,7 @@ async function startRecording() {
     console.log('[rec] started');
     vibrate(30);
     showWave(true);
-    try { music.duckTo(0.15, 500); } catch {}
+    try { music.fadeTo(0.0, 300); } catch {}
     try { els.secretWordDisplay.classList.add('pop'); setTimeout(() => els.secretWordDisplay.classList.remove('pop'), 380); } catch {}
 
     try { if (els.startRecBtn) els.startRecBtn.disabled = true; if (els.stopRecBtn) els.stopRecBtn.disabled = false; } catch {}
@@ -1932,6 +2014,8 @@ try {
 try { if (els.home && !els.home.classList.contains('hidden')) document.body.classList.add('home-mode'); } catch {}
 // Show home (or auth if older flow)
 show(els.home || els.auth);
+// Ensure WS connection is established on landing for immediate CTA responsiveness
+try { if (!ws || ws.readyState !== WebSocket.OPEN) { console.log('[ws] ensure connect on landing'); connectWS(); } } catch {}
 try { els.startRoundBtn.disabled = true; } catch {}
 try {
   els.secretInput.addEventListener('input', () => {
@@ -1958,10 +2042,10 @@ const SHOP_RARITIES = {
 
 // Catalogue (mappé aux assets d'avatars existants)
 const CATALOG = {
-  common: ['skin1.png','skin2.png','skin3.png','skin4.png','skin5.png'],
-  rare: ['skin6.png','skin7.png','skin8.png'],
-  epic: ['skin9.png','skin10.png','skin11.png','skin12.png'],
-  legendary: ['skin13.png','skin14.png','skin15.png','skin16.png']
+  common: ['skin1.jpg','skin2.jpg','skin3.jpg','skin4.jpg','skin5.jpg'],
+  rare: ['skin6.jpg','skin7.jpg'],
+  epic: ['skin8.jpg','skin9.jpg'],
+  legendary: ['skin10.jpg']
 };
 
 // Stockage local
@@ -2051,7 +2135,7 @@ function renderShop() {
     const imgWrap = document.createElement('div'); imgWrap.className = 'img';
     const halo = document.createElement('div'); halo.className = 'halo'; imgWrap.appendChild(halo);
     const img = document.createElement('img'); img.src = avatarUrl(it.file); img.alt = it.file; imgWrap.appendChild(img);
-    const name = document.createElement('div'); name.className = 'name'; name.textContent = it.file.replace(/\.png$/,'');
+    const name = document.createElement('div'); name.className = 'name'; name.textContent = it.file.replace(/\.(png|jpg|jpeg)$/i,'');
     const price = document.createElement('div'); price.className = 'price'; price.textContent = `${it.price} Échos`;
     const btn = document.createElement('button'); btn.className = 'buy-btn btn'; btn.textContent = 'Acheter';
     const owned = isOwned(it.file);

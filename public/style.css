@@ -526,6 +526,16 @@ body:has(#home.landing) .greet-name { font-weight: 700; background: rgba(255,255
 .recorder-bubbles .bubble.big { font-size: 16px; padding: 10px 14px; }
 .recorder-bubbles .bubble.anim { animation: bubbleRise var(--dur,2600ms) cubic-bezier(.2,.8,.3,1) forwards; }
 
+/* Global Music Control (bottom-left) */
+.music-ctrl { position: fixed; left: 12px; bottom: 12px; bottom: calc(env(safe-area-inset-bottom, 0px) + 12px); z-index: 9999; display: grid; gap: 8px; align-items: center; }
+.music-buttons { display: grid; grid-auto-flow: column; gap: 8px; }
+.music-btn { width: 40px; height: 40px; border-radius: 12px; border: none; background: rgba(255,255,255,.9); box-shadow: 0 6px 16px rgba(0,0,0,.18); font-size: 18px; font-weight: 900; color: #6b3de8; }
+.music-btn:active { transform: scale(.96); }
+.music-panel { background: rgba(255,255,255,.92); border: 1px solid rgba(0,0,0,.08); border-radius: 12px; padding: 8px 10px; box-shadow: 0 8px 22px rgba(0,0,0,.18); display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px; }
+.music-panel.hidden { display: none; }
+.music-value { font-weight: 800; color: #2D1855; min-width: 40px; text-align: right; }
+.music-panel input[type="range"] { accent-color: #6b3de8; }
+
 /* Winner toast */
 .winner-toast { position: fixed; left: 50%; top: 36%; transform: translate(-50%, -50%) scale(.9); z-index: 40; background: rgba(255,255,255,.95); border-radius: 16px; padding: 14px 16px; box-shadow: 0 14px 40px rgba(0,0,0,.16); display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: center; will-change: transform, opacity; }
 .winner-toast.hidden { display: none !important; }

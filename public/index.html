@@ -24,10 +24,22 @@
         <h1>NOISE.IO</h1>
         <div id="roomInfo" class="room-info"></div>
       </div>
+
+  <!-- Global music control (bottom-left) -->
+  <div id="musicCtrl" class="music-ctrl">
+    <div class="music-buttons">
+      <button id="musicMuteBtn" class="music-btn" aria-label="Couper la musique" title="Couper la musique">🔊</button>
+      <button id="musicBtn" class="music-btn" aria-label="Musique" title="Réglage musique">🎵</button>
+    </div>
+    <div id="musicPanel" class="music-panel hidden">
+      <input id="musicSlider" type="range" min="0" max="1" step="0.05" value="0.4" />
+      <span id="musicValue" class="music-value">40%</span>
+    </div>
+  </div>
       <div class="row header-row">
         <div class="header-left">
           <button id="openAvatarBtn" class="avatar-chip" aria-label="Changer d’avatar">
-            <img id="avatarChipImg" src="/assets/avatars/skin1.png" alt="Avatar" />
+            <img id="avatarChipImg" src="/assets/avatars/skin1.jpg" alt="Avatar" />
           </button>
           <span id="greetName" class="greet-name">Salut 👋</span>
         </div>
@@ -54,7 +66,7 @@
           <!-- Bloc Profil joueur -->
           <div class="avatar-wrap">
             <button id="homeAvatarBtn" class="home-avatar-btn" aria-label="Changer d’avatar">
-              <img id="homeAvatarImg" class="home-avatar-img" src="/assets/avatars/skin1.png" alt="Avatar" />
+              <img id="homeAvatarImg" class="home-avatar-img" src="/assets/avatars/skin1.jpg" alt="Avatar" />
             </button>
           </div>
           <div class="nick-row">
@@ -319,6 +331,6 @@
     </div>
   </div>
 
-  <script src="/client.js?v=imgwords-v3" type="module"></script>
+  <script src="/client.js?v=imgwords-v5" type="module"></script>
 </body>
 </html>
